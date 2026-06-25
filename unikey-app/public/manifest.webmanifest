@@ -1,0 +1,10 @@
+{
+  "name": "ÜniKEY",
+  "short_name": "ÜniKEY",
+  "description": "Üniversite öğrencileri için PDF özetleme, soru sorma ve quiz hazırlama uygulaması.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f8fb",
+  "theme_color": "#0e7490"
+}
