@@ -58,9 +58,33 @@ type DepartmentOption = {
 const wizardSteps = ["Ders Bilgileri", "Doküman Ekle", "Özet Çıkar", "Hazır!"];
 
 const sampleCourses = [
-  { title: "Veri Yapıları ve Algoritmalar", progress: 73, accent: "orange" },
-  { title: "Makine Öğrenmesi", progress: 45, accent: "purple" },
-  { title: "Elektrik Devreleri", progress: 20, accent: "blue" },
+  {
+    title: "Veri Yapıları ve Algoritmalar",
+    pdfs: 12,
+    quizzes: 34,
+    success: 82,
+    lastStudy: "dün",
+    weakTopic: "Bağlı listeler",
+    accent: "orange",
+  },
+  {
+    title: "Makine Öğrenmesi",
+    pdfs: 7,
+    quizzes: 18,
+    success: 64,
+    lastStudy: "2 gün önce",
+    weakTopic: "Model doğrulama",
+    accent: "purple",
+  },
+  {
+    title: "Elektrik Devreleri",
+    pdfs: 5,
+    quizzes: 11,
+    success: 58,
+    lastStudy: "geçen hafta",
+    weakTopic: "Thevenin eşdeğeri",
+    accent: "blue",
+  },
 ];
 
 const fallbackTopics = [
@@ -640,18 +664,18 @@ function AuthScreen({
           <div className="brand-mark">Ü</div>
           <strong>ÜniKEY</strong>
         </div>
-        <h1>Vize ve final haftasında PDF’lerin dağınık kalmasın.</h1>
+        <h1>PDF’lerini yükle. 5 dakikada sınava hazırlan.</h1>
         <p>
-          Ders dokümanını yükle, özetini çıkar, anlamadığın yeri sor ve aynı
-          materyalden sınav tarzı quiz çöz.
+          ÜniKEY yüklediğin ders notlarını analiz eder, özet çıkarır,
+          eksiklerini bulur ve aynı materyalden sana quiz hazırlar.
         </p>
         <div className="auth-preview">
           <span>1</span>
-          <strong>Dersini aç</strong>
-          <span>2</span>
           <strong>PDF yükle</strong>
+          <span>2</span>
+          <strong>AI özet çıkarsın</strong>
           <span>3</span>
-          <strong>Özet ve quiz al</strong>
+          <strong>Quiz çöz</strong>
         </div>
       </section>
 
@@ -801,38 +825,67 @@ function Dashboard({
   onContinue: () => void;
   onNewCourse: () => void;
 }) {
+  const hasDocuments = documents.length > 0;
+  const uploadedPdfCount = hasDocuments ? documents.length : 12;
+  const quizCount = hasDocuments
+    ? documents.reduce((total, document) => total + document.quiz.length, 0)
+    : 48;
+  const successRate = hasDocuments ? 74 : 68;
+
   return (
     <div className="dashboard-page">
       <header className="page-heading">
         <div>
-          <h1>Çalışma alanın hazır.</h1>
+          <h1>Bugün ne çalışmak istiyorsun?</h1>
           <p>
-            {university || "Üniversite"} · {department || "Bölüm"} için vize/final
-            dokümanlarını tek yerde işle.
+            {university || "Üniversite"} · {department || "Bölüm"} için PDF’lerini
+            yükle, özet çıkar ve vize/final tarzı quiz çöz.
           </p>
         </div>
-        <button className="primary-button" onClick={onNewCourse}>
-          Yeni Ders Oluştur
+        <button className="secondary-button" onClick={onContinue}>
+          Son Çalışmaya Devam Et
         </button>
       </header>
 
-      <div className="dashboard-top">
-        <button className="continue-card" onClick={onContinue}>
-          <span>Çalışmaya Devam Et</span>
-          <strong>{courseName || "Veri Yapıları ve Algoritmalar"}</strong>
-          <small>{documents.length > 0 ? "%73 tamamlandı" : "Henüz doküman eklenmedi"}</small>
-          <i />
+      <section className="dashboard-hero">
+        <button className="pdf-cta-card" onClick={onNewCourse}>
+          <span className="cta-kicker">PDF → Özet → Quiz</span>
+          <strong>PDF yükle ve sınav modunu başlat</strong>
+          <small>
+            Ders notunu seç; ÜniKEY önemli konuları çıkarır, anlaşılmayan yerleri
+            cevaplar ve quiz hazırlar.
+          </small>
+          <em>PDF YÜKLE</em>
         </button>
-        <div className="goal-card">
-          <span>Bu derste ilerleme</span>
-          <div className="ring">4/5</div>
-          <small>Özet ve quiz akışı hazır.</small>
+        <div className="ai-insight-card">
+          <span>ÜniKEY Analizi</span>
+          <strong>{courseName || "Veri Yapıları ve Algoritmalar"}</strong>
+          <ul>
+            <li>Bağlı liste konusu zayıf görünüyor.</li>
+            <li>Ağaç yapılarında hata oranı %42.</li>
+            <li>Final öncesi quiz tekrarları öneriliyor.</li>
+          </ul>
         </div>
-      </div>
+      </section>
+
+      <section className="study-metric-grid">
+        <div>
+          <strong>{uploadedPdfCount}</strong>
+          <span>PDF işlendi</span>
+        </div>
+        <div>
+          <strong>{quizCount}</strong>
+          <span>Quiz sorusu</span>
+        </div>
+        <div>
+          <strong>%{successRate}</strong>
+          <span>Ortalama başarı</span>
+        </div>
+      </section>
 
       <section className="dashboard-section">
         <div className="section-title">
-          <h2>Derslerim</h2>
+          <h2>Ders bazlı çalışma</h2>
           <button>Tümünü gör</button>
         </div>
         <div className="course-grid">
@@ -840,37 +893,29 @@ function Dashboard({
             <div key={course.title} className={`course-card ${course.accent}`}>
               <span>{course.title.slice(0, 2)}</span>
               <strong>{course.title}</strong>
-              <small>İlerleme</small>
-              <div className="progress-line">
-                <i style={{ width: `${course.progress}%` }} />
+              <div className="course-stats">
+                <small>{course.pdfs} PDF</small>
+                <small>{course.quizzes} Quiz</small>
+                <small>%{course.success} başarı</small>
               </div>
-              <em>{course.progress}%</em>
+              <p>Zayıf konu: {course.weakTopic}</p>
+              <em>Son çalışma: {course.lastStudy}</em>
             </div>
           ))}
           <button className="add-course-card" onClick={onNewCourse}>
             <span>+</span>
-            Yeni Ders Ekle
+            Yeni PDF / Ders Ekle
           </button>
         </div>
       </section>
 
-      <section className="activity-grid">
+      <section className="quick-flow-card">
+        <h2>Ürün nasıl çalışıyor?</h2>
         <div>
-          <h2>Son Aktiviteler</h2>
-          {["Quiz tamamlandı", "Yeni doküman eklendi", "Çalışma oturumu"].map(
-            (activity, index) => (
-              <div key={activity} className="activity-item">
-                <span>{index + 1}</span>
-                <p>{activity}</p>
-                <small>{index + 1} saat önce</small>
-              </div>
-            ),
-          )}
+          <span>1. PDF yükle</span>
+          <span>2. AI özet çıkarsın</span>
+          <span>3. Quiz çöz</span>
         </div>
-        <blockquote>
-          Başarı, doğru planlama ve düzenli çalışmayla gelir.
-          <span>ÜniKEY</span>
-        </blockquote>
       </section>
     </div>
   );
