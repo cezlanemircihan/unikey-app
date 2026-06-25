@@ -393,7 +393,7 @@ button {
 }
 
 .pdf-cta-card,
-.ai-insight-card,
+.coach-card,
 .study-metric-grid div,
 .course-card,
 .add-course-card,
@@ -436,7 +436,7 @@ button {
 
 .cta-kicker,
 .pdf-cta-card small,
-.ai-insight-card span {
+.coach-card span {
   color: #ddd6fe;
   font-weight: 800;
 }
@@ -472,20 +472,28 @@ button {
   padding: 0.85rem 1.2rem;
 }
 
-.ai-insight-card {
+.coach-card {
   padding: 1.2rem;
   background:
     linear-gradient(180deg, rgba(15, 23, 42, 0.86), rgba(15, 23, 42, 0.58)),
     rgba(255, 255, 255, 0.045);
 }
 
-.ai-insight-card strong {
+.coach-card strong {
   display: block;
   margin: 0.7rem 0 1rem;
-  font-size: 1.05rem;
+  font-size: 1.18rem;
+  line-height: 1.25;
 }
 
-.ai-insight-card ul {
+.coach-card p {
+  color: #cbd5e1;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 0 0 1rem;
+}
+
+.coach-card ul {
   display: grid;
   gap: 0.75rem;
   list-style: none;
@@ -493,13 +501,24 @@ button {
   padding: 0;
 }
 
-.ai-insight-card li {
+.coach-card li {
   border: 1px solid rgba(196, 181, 253, 0.15);
   border-radius: 0.8rem;
   background: rgba(139, 92, 246, 0.1);
   color: #dbe4f0;
   padding: 0.8rem;
   line-height: 1.45;
+}
+
+.coach-card button {
+  width: 100%;
+  border: 0;
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.92);
+  color: #4c1d95;
+  font-weight: 950;
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
 }
 
 .study-metric-grid {
@@ -760,6 +779,42 @@ button {
   resize: vertical;
 }
 
+.upload-context-card,
+.pdf-detection-card {
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.055);
+  margin-bottom: 0.9rem;
+  padding: 1rem;
+}
+
+.upload-context-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+}
+
+.upload-context-card span {
+  color: #c4b5fd;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.upload-context-card strong {
+  display: block;
+  margin-top: 0.25rem;
+}
+
+.upload-context-card button {
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: #dbe4f0;
+  font-weight: 850;
+  padding: 0.75rem 0.9rem;
+}
+
 .upload-dropzone {
   display: grid;
   place-items: center;
@@ -774,6 +829,33 @@ button {
 .upload-dropzone span {
   font-size: 2.2rem;
   color: #c4b5fd;
+}
+
+.pdf-detection-card strong,
+.pdf-detection-card p {
+  margin: 0;
+}
+
+.pdf-detection-card p {
+  color: var(--muted);
+  margin-top: 0.35rem;
+}
+
+.pdf-detection-card div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.9rem;
+}
+
+.pdf-detection-card span {
+  border: 1px solid rgba(99, 212, 113, 0.22);
+  border-radius: 0.75rem;
+  background: rgba(99, 212, 113, 0.09);
+  color: #bbf7d0;
+  font-size: 0.82rem;
+  font-weight: 850;
+  padding: 0.75rem;
 }
 
 .uploaded-list {
@@ -1000,6 +1082,34 @@ button {
   gap: 0.75rem;
 }
 
+.assistant-toolbar {
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 0.85rem;
+}
+
+.assistant-toolbar strong {
+  display: block;
+  margin-bottom: 0.65rem;
+}
+
+.assistant-toolbar div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.assistant-toolbar button {
+  border: 1px solid rgba(196, 181, 253, 0.16);
+  border-radius: 999px;
+  background: rgba(139, 92, 246, 0.12);
+  color: #e9d5ff;
+  font-size: 0.78rem;
+  font-weight: 850;
+  padding: 0.45rem 0.7rem;
+}
+
 .chat-bubble {
   max-width: 75%;
   border-radius: 0.85rem;
@@ -1100,6 +1210,30 @@ button {
 
 .analysis-card p.weak {
   color: #fca5a5;
+}
+
+.wrong-topic-card {
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 0.9rem;
+  background: rgba(248, 113, 113, 0.08);
+  margin-top: 1rem;
+  padding: 0.9rem;
+}
+
+.wrong-topic-card strong {
+  display: block;
+  margin-bottom: 0.65rem;
+}
+
+.wrong-topic-card span {
+  display: inline-flex;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.14);
+  color: #fecaca;
+  font-size: 0.78rem;
+  font-weight: 850;
+  margin: 0 0.35rem 0.35rem 0;
+  padding: 0.35rem 0.55rem;
 }
 
 .next-card {

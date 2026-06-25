@@ -55,7 +55,7 @@ type DepartmentOption = {
   scoreType?: string;
 };
 
-const wizardSteps = ["Ders Bilgileri", "Doküman Ekle", "Özet Çıkar", "Hazır!"];
+const wizardSteps = ["PDF Yükle", "AI Analiz", "Özet Çıkar", "Quiz Hazır"];
 
 const sampleCourses = [
   {
@@ -201,6 +201,12 @@ export default function Home() {
       }
 
       const extracted = await extractPdfTextFromFile(selectedFile);
+      const analysisCourseName =
+        courseName.trim() && courseName !== "Yeni Ders"
+          ? courseName
+          : inferCourseNameFromFile(selectedFile.name);
+      setCourseName(analysisCourseName);
+
       const textForAnalysis = extracted.text.slice(0, 180000);
 
       if (textForAnalysis.trim().length < 80) {
@@ -213,7 +219,7 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          courseName,
+          courseName: analysisCourseName,
           documentName: selectedFile.name,
           pageCount: extracted.pageCount,
           text: textForAnalysis,
@@ -291,7 +297,7 @@ export default function Home() {
   }
 
   function startNewCourse() {
-    setCourseName("");
+    setCourseName("Yeni Ders");
     setCourseCode("");
     setCourseDescription("");
     setSelectedFile(null);
@@ -302,7 +308,7 @@ export default function Home() {
     setQuizIndex(0);
     setQuizScope("all");
     setSelectedAnswers({});
-    setScreen("course-info");
+    setScreen("document-upload");
   }
 
   function goDashboard() {
@@ -360,6 +366,7 @@ export default function Home() {
             documents={documents}
             university={userUniversity}
             department={userDepartment}
+            email={userEmail}
             onContinue={() =>
               documents.length > 0 ? setScreen("course-ready") : setScreen("document-upload")
             }
@@ -382,19 +389,21 @@ export default function Home() {
         )}
 
         {screen === "document-upload" && (
-          <WizardFrame title={courseName || "Yeni Ders"} activeStep={1} onBack={() => setScreen("course-info")}>
+          <WizardFrame title={courseName || "PDF Yükle"} activeStep={0} onBack={goDashboard}>
             <DocumentUploadStep
+              courseName={courseName}
               selectedFile={selectedFile}
               documents={documents}
               errorMessage={errorMessage}
               setSelectedFile={setSelectedFile}
+              onEditCourse={() => setScreen("course-info")}
               onAnalyze={analyzeSelectedFile}
             />
           </WizardFrame>
         )}
 
         {screen === "summary-process" && (
-          <WizardFrame title={courseName || "Yeni Ders"} activeStep={2} onBack={() => setScreen("document-upload")}>
+          <WizardFrame title={courseName || "Yeni Ders"} activeStep={1} onBack={() => setScreen("document-upload")}>
             <SummaryProcessStep isUploading={isUploading} />
           </WizardFrame>
         )}
@@ -457,10 +466,18 @@ export default function Home() {
             correctCount={correctCount}
             total={currentQuiz.length}
             topics={topics}
+            quiz={currentQuiz}
+            selectedAnswers={selectedAnswers}
             onMoreQuiz={() => {
               setQuizIndex(0);
               setSelectedAnswers({});
               setScreen("quiz");
+            }}
+            onReviewWeak={(weakTopics) => {
+              setQuestion(
+                `Yanlış yaptığım şu konuları tekrar anlat: ${weakTopics.join(", ")}. Önce basitçe açıkla, sonra sınavda nasıl sorulabileceğini göster.`,
+              );
+              setScreen("study-chat");
             }}
             onReview={() => setScreen("summary-review")}
             onDashboard={goDashboard}
@@ -815,6 +832,7 @@ function Dashboard({
   documents,
   university,
   department,
+  email,
   onContinue,
   onNewCourse,
 }: {
@@ -822,10 +840,12 @@ function Dashboard({
   documents: DocumentItem[];
   university: string;
   department: string;
+  email: string;
   onContinue: () => void;
   onNewCourse: () => void;
 }) {
   const hasDocuments = documents.length > 0;
+  const firstName = email.split("@")[0]?.split(/[._-]/)[0] || "Emir";
   const uploadedPdfCount = hasDocuments ? documents.length : 12;
   const quizCount = hasDocuments
     ? documents.reduce((total, document) => total + document.quiz.length, 0)
@@ -857,14 +877,20 @@ function Dashboard({
           </small>
           <em>PDF YÜKLE</em>
         </button>
-        <div className="ai-insight-card">
-          <span>ÜniKEY Analizi</span>
-          <strong>{courseName || "Veri Yapıları ve Algoritmalar"}</strong>
+        <div className="coach-card">
+          <span>ÜniKEY Koçu</span>
+          <strong>Merhaba {titleCase(firstName)}. Finale 12 gün kaldı.</strong>
+          <p>
+            {courseName && courseName !== "Yeni Ders"
+              ? `${courseName} için bugün 18 dakikalık hedefli tekrar öneriyorum.`
+              : "Bugün 18 dakikalık hedefli tekrar öneriyorum."}
+          </p>
           <ul>
-            <li>Bağlı liste konusu zayıf görünüyor.</li>
-            <li>Ağaç yapılarında hata oranı %42.</li>
-            <li>Final öncesi quiz tekrarları öneriliyor.</li>
+            <li>Ağaçlar: traversal sorularında hata riski yüksek.</li>
+            <li>Hash Table: çakışma çözümü tekrar edilmeli.</li>
+            <li>Graphlar: BFS/DFS ayrımı netleştirilmeli.</li>
           </ul>
+          <button onClick={onContinue}>Koçla çalışmaya başla</button>
         </div>
       </section>
 
@@ -910,11 +936,11 @@ function Dashboard({
       </section>
 
       <section className="quick-flow-card">
-        <h2>Ürün nasıl çalışıyor?</h2>
+        <h2>UniKEY sadece özet çıkarmaz; sınava hazırlar.</h2>
         <div>
           <span>1. PDF yükle</span>
-          <span>2. AI özet çıkarsın</span>
-          <span>3. Quiz çöz</span>
+          <span>2. Eksiklerini bul</span>
+          <span>3. Yanlışlarına göre tekrar et</span>
         </div>
       </section>
     </div>
@@ -1002,25 +1028,47 @@ function CourseInfoStep({
 }
 
 function DocumentUploadStep({
+  courseName,
   selectedFile,
   documents,
   errorMessage,
   setSelectedFile,
+  onEditCourse,
   onAnalyze,
 }: {
+  courseName: string;
   selectedFile: File | null;
   documents: DocumentItem[];
   errorMessage: string;
   setSelectedFile: (file: File | null) => void;
+  onEditCourse: () => void;
   onAnalyze: () => void;
 }) {
+  const suggestedCourse = selectedFile ? inferCourseNameFromFile(selectedFile.name) : courseName;
+  const estimatedPages = selectedFile
+    ? Math.max(6, Math.round(selectedFile.size / 85000))
+    : 0;
+  const estimatedTopics = selectedFile
+    ? Math.min(24, Math.max(6, Math.round(estimatedPages / 3)))
+    : 0;
+  const estimatedMinutes = selectedFile
+    ? Math.max(18, estimatedTopics * 7)
+    : 0;
+
   return (
     <section className="upload-page">
       {errorMessage && <div className="error-banner">{errorMessage}</div>}
+      <div className="upload-context-card">
+        <span>PDF-first akış</span>
+        <strong>
+          Önce dokümanı yükle; ders adını ve konuları ÜniKEY çıkarsın.
+        </strong>
+        <button onClick={onEditCourse}>Ders bilgilerini elle düzenle</button>
+      </div>
       <label className="upload-dropzone">
         <span>☁</span>
         <strong>Dokümanlarını Yükle</strong>
-        <small>PDF dosyanı seç. Özet ve quiz bu dokümandan hazırlanır.</small>
+        <small>PDF dosyanı buraya sürükle veya seç. Özet, eksik analizi ve quiz bu dokümandan hazırlanır.</small>
         <input
           type="file"
           accept=".pdf"
@@ -1045,6 +1093,17 @@ function DocumentUploadStep({
           </div>
         )}
       </div>
+      {selectedFile && (
+        <div className="pdf-detection-card">
+          <strong>ÜniKEY bu dokümanı analiz etmeye hazır.</strong>
+          <p>Bu doküman {suggestedCourse} dersine ait gibi görünüyor.</p>
+          <div>
+            <span>✓ Yaklaşık {estimatedPages} sayfa bulundu</span>
+            <span>✓ {estimatedTopics} konu tespit edilecek</span>
+            <span>✓ Tahmini çalışma süresi: {estimatedMinutes} dakika</span>
+          </div>
+        </div>
+      )}
       <button disabled={!selectedFile} onClick={onAnalyze} className="primary-button">
         Özeti Çıkar →
       </button>
@@ -1183,6 +1242,21 @@ function StudyChat({
         </div>
       </aside>
       <section className="chat-window">
+        <div className="assistant-toolbar">
+          <strong>PDF Asistanı</strong>
+          <div>
+            {[
+              "Bunu çocuk gibi anlat",
+              "Sınavda nasıl gelir?",
+              "Örnek soru çöz",
+              "Ezber tekniği ver",
+            ].map((prompt) => (
+              <button key={prompt} onClick={() => setQuestion(prompt)}>
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="chat-bubble user">
           Bağlı listelerde bir elemanı nasıl silinir?
         </div>
@@ -1307,18 +1381,30 @@ function QuizResult({
   correctCount,
   total,
   topics,
+  quiz,
+  selectedAnswers,
   onMoreQuiz,
+  onReviewWeak,
   onReview,
   onDashboard,
 }: {
   correctCount: number;
   total: number;
   topics: string[];
+  quiz: StudyQuizQuestion[];
+  selectedAnswers: Record<number, string>;
   onMoreQuiz: () => void;
+  onReviewWeak: (weakTopics: string[]) => void;
   onReview: () => void;
   onDashboard: () => void;
 }) {
   const score = total > 0 ? Math.round((correctCount / total) * 100) : 0;
+  const wrongItems = quiz
+    .map((question, index) => ({ question, index, selected: selectedAnswers[index] }))
+    .filter((item) => item.selected && item.selected !== item.question.answer);
+  const weakTopics = wrongItems.length > 0
+    ? wrongItems.map((item) => topics[item.index % topics.length] || item.question.question)
+    : topics.slice(0, 3);
 
   return (
     <div className="result-page">
@@ -1329,14 +1415,25 @@ function QuizResult({
       </section>
       <section className="analysis-card">
         <h3>Performans Analizi</h3>
-        {topics.slice(0, 5).map((topic, index) => (
+        {topics.slice(0, 4).map((topic, index) => (
           <p key={topic} className={index < 3 ? "good" : "weak"}>
             {topic}
           </p>
         ))}
+        <div className="wrong-topic-card">
+          <strong>Yanlış yaptığın konular</strong>
+          {wrongItems.length > 0 ? (
+            weakTopics.map((topic) => <span key={topic}>{topic}</span>)
+          ) : (
+            <span>Zayıf konu görünmüyor; tekrar için karışık soru çöz.</span>
+          )}
+        </div>
       </section>
       <section className="next-card">
         <h3>Ne yapmak istersin?</h3>
+        <button onClick={() => onReviewWeak(weakTopics)}>
+          Bu Konuları Tekrar Anlat
+        </button>
         <button onClick={onMoreQuiz}>Daha Fazla Soru Çöz</button>
         <button onClick={onReview}>Konuyu Tekrar Çalış</button>
         <button onClick={onDashboard}>Ana Sayfaya Dön</button>
@@ -1402,6 +1499,34 @@ function titleCase(value: string) {
     .split(" ")
     .map((word) => word.charAt(0).toLocaleUpperCase("tr") + word.slice(1))
     .join(" ");
+}
+
+function inferCourseNameFromFile(fileName: string) {
+  const cleanName = fileName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b(chapter|hafta|week|lecture|ders|not|notes|pdf)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const lowerName = cleanName.toLocaleLowerCase("tr");
+
+  if (lowerName.includes("algorithm") || lowerName.includes("algoritma")) {
+    return "Veri Yapıları ve Algoritmalar";
+  }
+
+  if (lowerName.includes("machine") || lowerName.includes("makine")) {
+    return "Makine Öğrenmesi";
+  }
+
+  if (lowerName.includes("operating") || lowerName.includes("işletim")) {
+    return "İşletim Sistemleri";
+  }
+
+  if (lowerName.includes("database") || lowerName.includes("veritaban")) {
+    return "Veritabanı Sistemleri";
+  }
+
+  return cleanName.length > 3 ? titleCase(cleanName) : "Yeni Ders";
 }
 
 async function extractPdfTextFromFile(file: File) {
