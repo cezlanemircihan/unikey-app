@@ -40,6 +40,10 @@ type AnalyzeResponse = {
   error?: string;
 };
 
+type PdfTextItem = {
+  str?: string;
+};
+
 type UniversityOption = {
   id?: number;
   name: string;
@@ -167,16 +171,31 @@ export default function Home() {
     setErrorMessage("");
     setScreen("summary-process");
 
-    const formData = new FormData();
-    formData.append("file", selectedFile);
-    formData.append("courseName", courseName);
-
     try {
+      if (!selectedFile.name.toLocaleLowerCase("tr").endsWith(".pdf")) {
+        throw new Error("Şimdilik yalnızca PDF dosyası destekleniyor.");
+      }
+
+      const extracted = await extractPdfTextFromFile(selectedFile);
+      const textForAnalysis = extracted.text.slice(0, 180000);
+
+      if (textForAnalysis.trim().length < 80) {
+        throw new Error(
+          "PDF metni okunamadı. Dosya taranmış görsel olabilir; şimdilik metin seçilebilen PDF yükle.",
+        );
+      }
+
       const response = await fetch("/api/documents/analyze", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          courseName,
+          documentName: selectedFile.name,
+          pageCount: extracted.pageCount,
+          text: textForAnalysis,
+        }),
       });
-      const payload = (await response.json()) as AnalyzeResponse;
+      const payload = await readJsonResponse<AnalyzeResponse>(response);
 
       if (!response.ok || payload.error) {
         throw new Error(payload.error || "PDF analiz edilemedi.");
@@ -226,10 +245,10 @@ export default function Home() {
           question,
         }),
       });
-      const payload = (await response.json()) as {
+      const payload = await readJsonResponse<{
         answer?: string;
         error?: string;
-      };
+      }>(response);
 
       if (!response.ok || payload.error) {
         throw new Error(payload.error || "Soru cevaplanamadı.");
@@ -1338,4 +1357,53 @@ function titleCase(value: string) {
     .split(" ")
     .map((word) => word.charAt(0).toLocaleUpperCase("tr") + word.slice(1))
     .join(" ");
+}
+
+async function extractPdfTextFromFile(file: File) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/legacy/build/pdf.worker.mjs",
+    import.meta.url,
+  ).toString();
+
+  const buffer = await file.arrayBuffer();
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(buffer),
+    disableFontFace: true,
+  });
+  const pdf = await loadingTask.promise;
+  const pages: string[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const text = (content.items as PdfTextItem[])
+      .map((item) => item.str)
+      .filter(Boolean)
+      .join(" ");
+
+    pages.push(text);
+  }
+
+  return {
+    pageCount: pdf.numPages,
+    text: pages.join("\n\n"),
+  };
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T & { error?: string }> {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    return (await response.json()) as T & { error?: string };
+  }
+
+  const text = await response.text();
+  const detail = text.includes("FUNCTION_PAYLOAD_TOO_LARGE")
+    ? "PDF dosyası canlı site limitini aştı."
+    : "Sunucu JSON yerine hata sayfası döndürdü.";
+
+  return {
+    error: `${detail} Sayfayı yenileyip tekrar dene; devam ederse daha küçük veya metin seçilebilen bir PDF yükle.`,
+  } as T & { error?: string };
 }

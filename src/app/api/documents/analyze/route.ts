@@ -1,11 +1,4 @@
 import { NextResponse } from "next/server";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import {
-  getDocument,
-  GlobalWorkerOptions,
-  VerbosityLevel,
-} from "pdfjs-dist/legacy/build/pdf.mjs";
 import {
   buildQuiz,
   buildSummary,
@@ -16,40 +9,27 @@ import { generateAiStudyPack } from "@/lib/ai-study";
 
 export const runtime = "nodejs";
 
-type PdfTextItem = {
-  str?: string;
+type AnalyzeInput = {
+  name: string;
+  pageCount?: number;
+  text: string;
 };
 
 export async function POST(request: Request) {
   try {
-    const formData = await request.formData();
-    const file = formData.get("file");
-    const courseName = String(formData.get("courseName") ?? "Bu ders");
+    const { courseName, document } = await readAnalyzeInput(request);
+    const text = cleanText(document.text);
 
-    if (!(file instanceof File)) {
+    if (text.length < 80) {
       return NextResponse.json(
-        { error: "PDF dosyası bulunamadı." },
+        {
+          error:
+            "PDF metni okunamadı. Dosya taranmış görsel olabilir; şimdilik metin seçilebilen PDF yükle.",
+        },
         { status: 400 },
       );
     }
 
-    if (!file.name.toLocaleLowerCase("tr").endsWith(".pdf")) {
-      return NextResponse.json(
-        { error: "Şimdilik yalnızca PDF dosyası destekleniyor." },
-        { status: 400 },
-      );
-    }
-
-    if (file.size > 18 * 1024 * 1024) {
-      return NextResponse.json(
-        { error: "PDF çok büyük. İlk sürüm için 18 MB altı dosya yükle." },
-        { status: 400 },
-      );
-    }
-
-    const buffer = await file.arrayBuffer();
-    const pages = await extractPdfPages(buffer);
-    const text = cleanText(pages.map((page) => page.text).join("\n\n"));
     const localPack = {
       summary: buildSummary(text, courseName),
       keywords: extractKeywords(text, 10),
@@ -57,14 +37,14 @@ export async function POST(request: Request) {
     };
     const aiPack = await generateAiStudyPack({
       courseName,
-      documentName: file.name,
+      documentName: document.name,
       text,
     });
     const pack = aiPack ?? localPack;
 
     return NextResponse.json({
-      name: file.name,
-      pageCount: pages.length,
+      name: document.name,
+      pageCount: document.pageCount ?? 0,
       text,
       summary: pack.summary,
       keywords: pack.keywords,
@@ -76,36 +56,41 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "PDF okunurken bir sorun oluştu. Dosya taranmış görsel olabilir veya PDF yapısı desteklenmiyor olabilir.",
+          error instanceof Error
+            ? error.message
+            : "PDF okunurken bir sorun oluştu. Dosya taranmış görsel olabilir veya PDF yapısı desteklenmiyor olabilir.",
       },
       { status: 500 },
     );
   }
 }
 
-async function extractPdfPages(buffer: ArrayBuffer) {
-  GlobalWorkerOptions.workerSrc = pathToFileURL(
-    join(process.cwd(), "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"),
-  ).toString();
+async function readAnalyzeInput(request: Request) {
+  const contentType = request.headers.get("content-type") ?? "";
 
-  const loadingTask = getDocument({
-    data: new Uint8Array(buffer),
-    disableFontFace: true,
-    verbosity: VerbosityLevel.ERRORS,
-  });
-  const pdf = await loadingTask.promise;
-  const pages: Array<{ pageNumber: number; text: string }> = [];
+  if (contentType.includes("application/json")) {
+    const body = (await request.json()) as {
+      courseName?: string;
+      documentName?: string;
+      pageCount?: number;
+      text?: string;
+    };
 
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const text = (content.items as PdfTextItem[])
-      .map((item) => item.str)
-      .filter(Boolean)
-      .join(" ");
+    if (!body.text?.trim()) {
+      throw new Error("PDF metni bulunamadı.");
+    }
 
-    pages.push({ pageNumber, text });
+    return {
+      courseName: body.courseName?.trim() || "Bu ders",
+      document: {
+        name: body.documentName?.trim() || "Doküman.pdf",
+        pageCount: body.pageCount,
+        text: body.text,
+      } satisfies AnalyzeInput,
+    };
   }
 
-  return pages;
+  throw new Error(
+    "PDF dosyası sunucuya doğrudan gönderilemedi. Sayfayı yenileyip tekrar yükle.",
+  );
 }
