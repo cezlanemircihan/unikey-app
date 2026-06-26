@@ -16,6 +16,17 @@ type StudyPack = {
   structuredQuiz?: StructuredQuizQuestion[];
 };
 
+export type AiStudyDebug = {
+  attempted: boolean;
+  failureReason?: "missing-key" | "request-failed" | "parse-error";
+  jsonParseError: boolean;
+};
+
+export type AiStudyResult = {
+  pack: StudyPack | null;
+  debug: AiStudyDebug;
+};
+
 type OpenAIResponse = {
   output_text?: string;
   output?: Array<{
@@ -42,7 +53,34 @@ export async function generateAiStudyPack({
   documentName: string;
   text: string;
 }): Promise<StudyPack | null> {
-  if (!hasOpenAiKey()) return null;
+  const result = await generateAiStudyPackWithDebug({
+    courseName,
+    documentName,
+    text,
+  });
+
+  return result.pack;
+}
+
+export async function generateAiStudyPackWithDebug({
+  courseName,
+  documentName,
+  text,
+}: {
+  courseName: string;
+  documentName: string;
+  text: string;
+}): Promise<AiStudyResult> {
+  if (!hasOpenAiKey()) {
+    return {
+      pack: null,
+      debug: {
+        attempted: false,
+        failureReason: "missing-key",
+        jsonParseError: false,
+      },
+    };
+  }
 
   const prompt = `
 Sen ÜniKEY uygulamasının vize/final odaklı AI sınav koçusun.
@@ -119,9 +157,27 @@ Zorunlu kurallar:
 `;
 
   const output = await safeCallOpenAi(prompt);
-  if (!output) return null;
+  if (!output) {
+    return {
+      pack: null,
+      debug: {
+        attempted: true,
+        failureReason: "request-failed",
+        jsonParseError: false,
+      },
+    };
+  }
 
-  return parseStudyPack(output);
+  const pack = parseStudyPack(output);
+
+  return {
+    pack,
+    debug: {
+      attempted: true,
+      failureReason: pack ? undefined : "parse-error",
+      jsonParseError: !pack,
+    },
+  };
 }
 
 export async function generateAiAnswer({

@@ -73,8 +73,25 @@ export type WrongAnswerAnalysis = {
   sourcePage: number;
 };
 
+export type OutputQualityReport = {
+  score: number;
+  checks: {
+    naturalTopicTitles: boolean;
+    topicDescriptionsComplete: boolean;
+    summaryMustKnowComplete: boolean;
+    summaryFieldsComplete: boolean;
+    quizExplanationsComplete: boolean;
+    quizTopicsComplete: boolean;
+    quizSourcePagesComplete: boolean;
+    weakTopicsReady: boolean;
+  };
+  warnings: string[];
+};
+
 const stopWords = new Set([
   "acaba",
+  "access",
+  "accessed",
   "ama",
   "ancak",
   "anlamaya",
@@ -102,6 +119,7 @@ const stopWords = new Set([
   "daha",
   "de",
   "defa",
+  "distinguish",
   "ders",
   "dersi",
   "diye",
@@ -109,8 +127,12 @@ const stopWords = new Set([
   "dokümanı",
   "dokumani",
   "en",
+  "exam",
+  "exams",
   "fakat",
+  "files",
   "final",
+  "from",
   "gibi",
   "genellikle",
   "hem",
@@ -137,6 +159,11 @@ const stopWords = new Set([
   "olan",
   "oldu",
   "olur",
+  "often",
+  "occur",
+  "over",
+  "problems",
+  "remote",
   "yarar",
   "önce",
   "sonra",
@@ -147,6 +174,8 @@ const stopWords = new Set([
   "sınavda",
   "sinavda",
   "test",
+  "students",
+  "useful",
   "şey",
   "sey",
   "şu",
@@ -374,6 +403,10 @@ export function buildTopics(text: string, limit = 8): StudyTopic[] {
       examLikelihood: template.examLikelihood,
       sourcePages: uniqueNumbers(matchingPages).slice(0, 3),
     });
+  }
+
+  if (curated.length >= Math.min(5, limit)) {
+    return curated.slice(0, limit);
   }
 
   const fallbackTopics = extractKeywords(text, limit * 2)
@@ -663,6 +696,73 @@ export function buildWeakTopicMiniQuiz(
   });
 }
 
+export function calculateOutputQuality({
+  topics,
+  summary,
+  quiz,
+}: {
+  topics: StudyTopic[];
+  summary: StudySummary;
+  quiz: QuizQuestion[];
+}): OutputQualityReport {
+  const checks = {
+    naturalTopicTitles:
+      topics.length > 0 &&
+      topics.every((topic) => isNaturalTopicTitle(topic.title)),
+    topicDescriptionsComplete:
+      topics.length > 0 &&
+      topics.every(
+        (topic) =>
+          topic.shortDescription.trim().length > 20 &&
+          topic.whyImportant.trim().length > 20,
+      ),
+    summaryMustKnowComplete: summary.mustKnow.length >= 3,
+    summaryFieldsComplete:
+      summary.shortOverview.trim().length > 40 &&
+      summary.keyConcepts.length >= 3 &&
+      summary.examStyleQuestions.length >= 3 &&
+      summary.commonConfusions.length >= 1 &&
+      summary.flashcards.length >= 3,
+    quizExplanationsComplete:
+      quiz.length > 0 &&
+      quiz.every(
+        (question) =>
+          (question.explanation ?? question.source ?? "").trim().length > 20,
+      ),
+    quizTopicsComplete:
+      quiz.length > 0 &&
+      quiz.every((question) => sanitizeLearningText(question.topic).length > 3),
+    quizSourcePagesComplete:
+      quiz.length > 0 &&
+      quiz.every((question) => resolveSourcePage(question) > 0),
+    weakTopicsReady:
+      quiz.length > 0 &&
+      quiz.some((question) => sanitizeLearningText(question.topic).length > 3),
+  };
+  const weights: Record<keyof OutputQualityReport["checks"], number> = {
+    naturalTopicTitles: 15,
+    topicDescriptionsComplete: 15,
+    summaryMustKnowComplete: 15,
+    summaryFieldsComplete: 15,
+    quizExplanationsComplete: 15,
+    quizTopicsComplete: 10,
+    quizSourcePagesComplete: 10,
+    weakTopicsReady: 5,
+  };
+  const score = Object.entries(checks).reduce((total, [key, passed]) => {
+    return total + (passed ? weights[key as keyof typeof checks] : 0);
+  }, 0);
+  const warnings = Object.entries(checks)
+    .filter(([, passed]) => !passed)
+    .map(([key]) => qualityWarningFor(key as keyof typeof checks));
+
+  return {
+    score,
+    checks,
+    warnings,
+  };
+}
+
 function buildFallbackTopic(keyword: string, pages: PageChunk[]): StudyTopic {
   const title = topicTitleFromKeyword(keyword);
   const sourcePages = findPagesForKeyword(pages, keyword);
@@ -783,6 +883,31 @@ function sanitizeLearningText(value?: string) {
     .replace(/\s+/g, " ")
     .replace(/\[Sayfa\s+\d+\]\s*/gi, "")
     .trim();
+}
+
+function isNaturalTopicTitle(title: string) {
+  const cleanTitle = sanitizeLearningText(title);
+  return (
+    cleanTitle.length >= 8 &&
+    cleanTitle.split(" ").length >= 2 &&
+    !isWeakTopicTitle(cleanTitle) &&
+    !/[$#{};=]|\\n|\becho\b|\bfor\s+.*\s+in\b|\bthen\b|\bfi\b|\bdone\b/i.test(cleanTitle)
+  );
+}
+
+function qualityWarningFor(key: keyof OutputQualityReport["checks"]) {
+  const warnings: Record<keyof OutputQualityReport["checks"], string> = {
+    naturalTopicTitles: "Konu başlıkları yeterince doğal veya öğretilebilir görünmüyor.",
+    topicDescriptionsComplete: "Bazı konu açıklamaları veya önem bilgileri eksik.",
+    summaryMustKnowComplete: "Özetin 'Mutlaka bil' alanı yeterince dolu değil.",
+    summaryFieldsComplete: "Özetin bazı yapılandırılmış alanları eksik.",
+    quizExplanationsComplete: "Bazı quiz sorularında öğretici açıklama eksik.",
+    quizTopicsComplete: "Bazı quiz sorularında topic bilgisi eksik.",
+    quizSourcePagesComplete: "Bazı quiz sorularında kaynak sayfa bilgisi eksik.",
+    weakTopicsReady: "Quiz sonucu zayıf konu analizi için yeterli topic verisi yok.",
+  };
+
+  return warnings[key];
 }
 
 function buildQuestionForTopic(
@@ -1004,7 +1129,10 @@ function isLikelyBadPhrase(current: string, next: string) {
 }
 
 function isWeakTopicTitle(title: string) {
-  return /^(Other|Command|File|Unix|Chapter|Notes?|PDF|Sayfa|The|And|For)\b/i.test(title);
+  return (
+    /^(Other|Command|File|Chapter|Notes?|PDF|Sayfa|The|And|For)\b/i.test(title) ||
+    /^Unix$/i.test(title)
+  );
 }
 
 function cleanPdfArtifact(value: string) {

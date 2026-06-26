@@ -8,6 +8,7 @@ import {
 import {
   buildQuizResultAnalysis,
   buildWeakTopicMiniQuiz,
+  type OutputQualityReport,
   type QuizQuestion as StudyQuizQuestion,
   type StudySummary,
   type StudyTopic,
@@ -39,6 +40,8 @@ type DocumentItem = {
   topics?: StudyTopic[];
   structuredSummary?: StudySummary;
   structuredQuiz?: StructuredQuizQuestion[];
+  quality?: OutputQualityReport;
+  debug?: AnalysisDebug;
 };
 
 type AnalyzeResponse = {
@@ -51,7 +54,30 @@ type AnalyzeResponse = {
   topics?: StudyTopic[];
   structuredSummary?: StudySummary;
   structuredQuiz?: StructuredQuizQuestion[];
+  quality?: OutputQualityReport;
+  debug?: AnalysisDebug;
   error?: string;
+};
+
+type AnalysisDebug = {
+  topicCount: number;
+  summaryFields: {
+    shortOverview: boolean;
+    mustKnow: number;
+    keyConcepts: number;
+    examStyleQuestions: number;
+    commonConfusions: number;
+    flashcards: number;
+  };
+  quizQuestionCount: number;
+  missingTopicCount: number;
+  missingSourcePageCount: number;
+  fallbackUsed: boolean;
+  jsonParseError: boolean;
+  aiAttempted: boolean;
+  aiFailureReason?: string;
+  qualityScore: number;
+  warnings: string[];
 };
 
 type PdfTextItem = {
@@ -70,6 +96,15 @@ type DepartmentOption = {
 };
 
 const wizardSteps = ["PDF Yükle", "AI Analiz", "Özet Çıkar", "Quiz Hazır"];
+const isDevelopment = process.env.NODE_ENV === "development";
+
+const demoPdfText = `
+[Sayfa 1] Chapter Two UNIX File Systems. The UNIX file system organizes files and directories in a hierarchical tree starting from the root directory. A working directory determines how relative pathnames are interpreted. In UNIX, regular files, directories, and device files are accessed through a common file interface.
+
+[Sayfa 2] Everything is a file does not mean everything is a text file. It means the operating system exposes many resources with file-like operations such as open, read, write, and close. This model simplifies system programming and command behavior.
+
+[Sayfa 3] Network File System, or NFS, allows a remote file system to be mounted and used like a local directory. Students should distinguish local file access from network-based file access. Exams often ask why NFS is useful and what problems may occur when files are accessed over a network.
+`;
 
 const sampleCourses = [
   {
@@ -243,35 +278,78 @@ export default function Home() {
         throw new Error(payload.error || "PDF analiz edilemedi.");
       }
 
-      setDocuments((items) => [
-        ...items,
-        {
-          id: Date.now(),
-          name: payload.name,
-          pageCount: payload.pageCount,
-          text: payload.text,
-          summary: payload.summary,
-          keywords: payload.keywords,
-          quiz: payload.quiz,
-          topics: payload.topics,
-          structuredSummary: payload.structuredSummary,
-          structuredQuiz: payload.structuredQuiz,
-        },
-      ]);
+      appendAnalyzedDocument(payload);
       setSelectedFile(null);
       setQuizIndex(0);
       setSelectedAnswers({});
+      setReviewQuiz(null);
       setScreen("course-ready");
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "Doküman analiz edilirken beklenmeyen bir sorun oluştu.",
-      );
+      setErrorMessage(formatAnalysisError(error));
       setScreen("document-upload");
     } finally {
       setIsUploading(false);
     }
+  }
+
+  async function runDemoAnalysisFlow() {
+    if (!isDevelopment) return;
+
+    setIsUploading(true);
+    setErrorMessage("");
+    setCourseName("İşletim Sistemleri Demo");
+    setScreen("summary-process");
+
+    try {
+      const response = await fetch("/api/documents/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          courseName: "İşletim Sistemleri Demo",
+          documentName: "demo-unix-file-systems.pdf",
+          pageCount: 3,
+          text: demoPdfText,
+        }),
+      });
+      const payload = await readJsonResponse<AnalyzeResponse>(response);
+
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || "Demo analiz akışı çalıştırılamadı.");
+      }
+
+      appendAnalyzedDocument(payload);
+      setSelectedFile(null);
+      setQuizScope("latest");
+      setQuizIndex(0);
+      setSelectedAnswers({});
+      setReviewQuiz(null);
+      setScreen("course-ready");
+    } catch (error) {
+      setErrorMessage(formatAnalysisError(error));
+      setScreen("document-upload");
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  function appendAnalyzedDocument(payload: AnalyzeResponse) {
+    setDocuments((items) => [
+      ...items,
+      {
+        id: Date.now(),
+        name: payload.name,
+        pageCount: payload.pageCount,
+        text: payload.text,
+        summary: payload.summary,
+        keywords: payload.keywords,
+        quiz: payload.quiz,
+        topics: payload.topics,
+        structuredSummary: payload.structuredSummary,
+        structuredQuiz: payload.structuredQuiz,
+        quality: payload.quality,
+        debug: payload.debug,
+      },
+    ]);
   }
 
   async function askQuestion() {
@@ -414,6 +492,7 @@ export default function Home() {
               setSelectedFile={setSelectedFile}
               onEditCourse={() => setScreen("course-info")}
               onAnalyze={analyzeSelectedFile}
+              onRunDemo={runDemoAnalysisFlow}
             />
           </WizardFrame>
         )}
@@ -521,6 +600,14 @@ export default function Home() {
             topics={topics}
             onBack={() => setScreen("quiz-result")}
             onNext={() => setScreen("course-ready")}
+          />
+        )}
+
+        {isDevelopment && (
+          <AiQualityDebugPanel
+            document={currentDocument}
+            isBusy={isUploading}
+            onRunDemo={runDemoAnalysisFlow}
           />
         )}
       </section>
@@ -1097,6 +1184,7 @@ function DocumentUploadStep({
   setSelectedFile,
   onEditCourse,
   onAnalyze,
+  onRunDemo,
 }: {
   courseName: string;
   selectedFile: File | null;
@@ -1105,6 +1193,7 @@ function DocumentUploadStep({
   setSelectedFile: (file: File | null) => void;
   onEditCourse: () => void;
   onAnalyze: () => void;
+  onRunDemo: () => void;
 }) {
   const suggestedCourse = selectedFile ? inferCourseNameFromFile(selectedFile.name) : courseName;
   const estimatedPages = selectedFile
@@ -1125,7 +1214,12 @@ function DocumentUploadStep({
         <strong>
           Önce dokümanı yükle; ders adını ve konuları ÜniKEY çıkarsın.
         </strong>
-        <button onClick={onEditCourse}>Ders bilgilerini elle düzenle</button>
+        <div className="upload-context-actions">
+          <button onClick={onEditCourse}>Ders bilgilerini elle düzenle</button>
+          {isDevelopment && (
+            <button onClick={onRunDemo}>Demo PDF ile test et</button>
+          )}
+        </div>
       </div>
       <label className="upload-dropzone">
         <span>☁</span>
@@ -1199,6 +1293,58 @@ function SummaryProcessStep({ isUploading }: { isUploading: boolean }) {
         İpucu: Daha iyi sonuçlar için kaliteli ve düzenli dokümanlar yüklemeye özen göster.
       </div>
     </section>
+  );
+}
+
+function AiQualityDebugPanel({
+  document,
+  isBusy,
+  onRunDemo,
+}: {
+  document?: DocumentItem;
+  isBusy: boolean;
+  onRunDemo: () => void;
+}) {
+  const debug = document?.debug;
+  const quality = document?.quality;
+
+  return (
+    <aside className="ai-debug-panel">
+      <div>
+        <span>DEV kalite paneli</span>
+        <strong>
+          {quality ? `Output skoru: ${quality.score}/100` : "Analiz bekleniyor"}
+        </strong>
+      </div>
+      <button onClick={onRunDemo} disabled={isBusy}>
+        {isBusy ? "Demo çalışıyor..." : "Demo akışı çalıştır"}
+      </button>
+      {debug ? (
+        <div className="ai-debug-grid">
+          <span>Konu: {debug.topicCount}</span>
+          <span>Quiz: {debug.quizQuestionCount}</span>
+          <span>Eksik topic: {debug.missingTopicCount}</span>
+          <span>Eksik sayfa: {debug.missingSourcePageCount}</span>
+          <span>Fallback: {debug.fallbackUsed ? "evet" : "hayır"}</span>
+          <span>JSON parse: {debug.jsonParseError ? "hatalı" : "temiz"}</span>
+          <span>AI denendi: {debug.aiAttempted ? "evet" : "hayır"}</span>
+          <span>AI sebep: {debug.aiFailureReason ?? "yok"}</span>
+          <span>mustKnow: {debug.summaryFields.mustKnow}</span>
+          <span>kavram: {debug.summaryFields.keyConcepts}</span>
+          <span>soru: {debug.summaryFields.examStyleQuestions}</span>
+          <span>kart: {debug.summaryFields.flashcards}</span>
+        </div>
+      ) : (
+        <p>Demo PDF veya gerçek PDF analizi çalıştırınca kalite sinyalleri burada görünür.</p>
+      )}
+      {quality?.warnings.length ? (
+        <ul>
+          {quality.warnings.slice(0, 4).map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+    </aside>
   );
 }
 
@@ -1671,11 +1817,27 @@ function titleCase(value: string) {
   return value
     .split(" ")
     .map((word) => word.charAt(0).toLocaleUpperCase("tr") + word.slice(1))
-    .join(" ");
+    .join(" ")
+    .replaceAll("Unıx", "UNIX")
+    .replaceAll("Nfs", "NFS")
+    .replaceAll("Tcp", "TCP")
+    .replaceAll("Pdf", "PDF")
+    .replaceAll("Ai", "AI")
+    .replaceAll(" İs ", " is ");
 }
 
 function humanizeTopic(topic: string) {
-  const normalized = topic.toLocaleLowerCase("tr").trim();
+  const rawTopic = topic.trim();
+  if (
+    rawTopic.includes("UNIX") ||
+    rawTopic.includes("NFS") ||
+    rawTopic.includes("TCP") ||
+    rawTopic.includes("PDF")
+  ) {
+    return rawTopic;
+  }
+
+  const normalized = rawTopic.toLocaleLowerCase("tr").trim();
   const replacements: Record<string, string> = {
     "chapter fifteen": "Socket Programlamaya Giriş",
     "fifteen sockets": "Socket Programlama",
@@ -1817,4 +1979,34 @@ async function readJsonResponse<T>(response: Response): Promise<T & { error?: st
   return {
     error: `${detail} Sayfayı yenileyip tekrar dene; devam ederse daha küçük veya metin seçilebilen bir PDF yükle.`,
   } as T & { error?: string };
+}
+
+function formatAnalysisError(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : "Doküman analiz edilirken beklenmeyen bir sorun oluştu.";
+  const normalized = message.toLocaleLowerCase("tr");
+
+  if (normalized.includes("metni okunamadı") || normalized.includes("metni bulunamadı")) {
+    return "PDF metni okunamadı. Bu dosya görsel/taranmış olabilir; metin seçilebilen bir PDF yüklemeyi dene.";
+  }
+
+  if (normalized.includes("quiz") && normalized.includes("oluştur")) {
+    return "Quiz oluşturulamadı. PDF metni çok kısa veya konu çıkarımı için yeterince net olmayabilir.";
+  }
+
+  if (normalized.includes("json") || normalized.includes("hata sayfası")) {
+    return "AI çıktısı okunabilir formatta üretilemedi. Sayfayı yenileyip tekrar dene; devam ederse PDF'i daha küçük bir parçayla yükle.";
+  }
+
+  if (normalized.includes("payload") || normalized.includes("limit")) {
+    return "PDF canlı site limitini aşmış olabilir. Daha küçük veya daha az sayfalı bir PDF ile tekrar dene.";
+  }
+
+  if (normalized.includes("pdf") && normalized.includes("destek")) {
+    return "Bu PDF yapısı desteklenmiyor olabilir. Metin seçilebilen, şifresiz bir PDF yükle.";
+  }
+
+  return message;
 }

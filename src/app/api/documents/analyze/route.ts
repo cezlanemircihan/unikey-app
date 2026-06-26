@@ -5,9 +5,10 @@ import {
   buildTopics,
   buildStructuredQuiz,
   buildStructuredSummary,
+  calculateOutputQuality,
   cleanText,
 } from "@/lib/study-engine";
-import { generateAiStudyPack } from "@/lib/ai-study";
+import { generateAiStudyPackWithDebug } from "@/lib/ai-study";
 
 export const runtime = "nodejs";
 
@@ -43,11 +44,12 @@ export async function POST(request: Request) {
       structuredSummary: localStructuredSummary,
       structuredQuiz: localStructuredQuiz,
     };
-    const aiPack = await generateAiStudyPack({
+    const aiResult = await generateAiStudyPackWithDebug({
       courseName,
       documentName: document.name,
       text,
     });
+    const aiPack = aiResult.pack;
     const pack = {
       ...localPack,
       ...aiPack,
@@ -56,6 +58,46 @@ export async function POST(request: Request) {
       structuredQuiz: aiPack?.structuredQuiz?.length
         ? aiPack.structuredQuiz
         : localPack.structuredQuiz,
+    };
+
+    if (pack.quiz.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Quiz oluşturulamadı. PDF metni çok kısa olabilir veya konu çıkarımı için yeterince okunabilir içerik içermiyor olabilir.",
+        },
+        { status: 422 },
+      );
+    }
+
+    const quality = calculateOutputQuality({
+      topics: pack.topics,
+      summary: pack.structuredSummary,
+      quiz: pack.quiz,
+    });
+    const missingTopicCount = pack.quiz.filter((question) => !question.topic).length;
+    const missingSourcePageCount = pack.quiz.filter(
+      (question) => typeof question.sourcePage !== "number",
+    ).length;
+    const debug = {
+      topicCount: pack.topics.length,
+      summaryFields: {
+        shortOverview: Boolean(pack.structuredSummary.shortOverview?.trim()),
+        mustKnow: pack.structuredSummary.mustKnow.length,
+        keyConcepts: pack.structuredSummary.keyConcepts.length,
+        examStyleQuestions: pack.structuredSummary.examStyleQuestions.length,
+        commonConfusions: pack.structuredSummary.commonConfusions.length,
+        flashcards: pack.structuredSummary.flashcards.length,
+      },
+      quizQuestionCount: pack.quiz.length,
+      missingTopicCount,
+      missingSourcePageCount,
+      fallbackUsed: !aiPack,
+      jsonParseError: aiResult.debug.jsonParseError,
+      aiAttempted: aiResult.debug.attempted,
+      aiFailureReason: aiResult.debug.failureReason,
+      qualityScore: quality.score,
+      warnings: quality.warnings,
     };
 
     return NextResponse.json({
@@ -69,6 +111,8 @@ export async function POST(request: Request) {
       structuredSummary: pack.structuredSummary,
       structuredQuiz: pack.structuredQuiz,
       engine: aiPack ? "ai" : "local",
+      quality,
+      debug,
     });
   } catch (error) {
     return NextResponse.json(
@@ -95,7 +139,9 @@ async function readAnalyzeInput(request: Request) {
     };
 
     if (!body.text?.trim()) {
-      throw new Error("PDF metni bulunamadı.");
+      throw new Error(
+        "PDF metni bulunamadı. Bu PDF görsel/taranmış olabilir veya tarayıcı metin çıkaramamış olabilir.",
+      );
     }
 
     return {
