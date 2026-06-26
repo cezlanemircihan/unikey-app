@@ -45,28 +45,31 @@ ${limitText(text)}
 Yalnızca geçerli JSON döndür. Markdown kullanma.
 JSON şeması:
 {
-  "summary": "Türkçe, başlıklı, sınava yönelik detaylı özet.",
+  "summary": "Türkçe, başlıklı, sınava yönelik özet.",
   "keywords": ["en fazla 10 önemli kavram"],
   "quiz": [
     {
-      "question": "PDF'e göre çoktan seçmeli soru",
+      "question": "Doğal ve sınav tarzı çoktan seçmeli soru",
       "options": ["4 seçenek"],
       "answer": "options içindeki doğru cevabın aynısı",
-      "source": "Sorunun dayandığı kısa PDF ifadesi"
+      "source": "Doğru cevap açıklaması + mümkünse Kaynak: PDF sayfa/ifade"
     }
   ]
 }
 
 Kurallar:
-- Summary alanını şu başlıklarla yaz:
-  1. Genel Çerçeve
-  2. Vize/Final İçin Bilmen Gerekenler
-  3. Temel Kavramlar
-  4. Muhtemel Soru Tarzları
-  5. Kısa Tekrar
+- Summary alanını mutlaka şu başlıklarla yaz:
+  1. Bu PDF ne anlatıyor?
+  2. Mutlaka bilmen gereken 3 şey
+  3. Kritik kavramlar
+  4. Sınavda nasıl gelir?
+  5. Ezber kartları
+- "Chapter Fifteen", "Fifteen Sockets", "Struct Sockaddr" gibi ham başlıkları aynen taşıma. Bunları "Socket Programlamaya Giriş", "Portlar ve Adresleme", "Adres Yapıları" gibi öğrenciye anlamlı Türkçe konu başlıklarına dönüştür.
 - PDF'teki dağınık metni toparla, benzer noktaları birleştir, kavramları öğrenciye anlatır gibi açıkla.
 - Özet ne çok yüzeysel ne de gereksiz uzun olsun; sınav öncesi tekrar notu gibi işe yarasın.
 - En fazla 5 quiz sorusu üret.
+- Quiz soruları "X kavramı PDF içinde hangi bağlamda geçiyor?" gibi robotik olmasın. Doğal sınav sorusu yaz: "TCP bağlantısının temel amacı nedir?" gibi.
+- Her quiz source alanında "Doğru cevap ... Çünkü ..." diye kısa açıklama ver.
 - Sadece PDF metnine dayan.
 - Bilgi PDF'te yoksa uydurma.
 - Türkçe karakter kullan.
@@ -102,6 +105,7 @@ PDF metni:
 ${limitText(text)}
 
 Cevabı Türkçe, kısa ve anlaşılır ver. Gerekirse maddeler kullan.
+Sonuna mümkünse "Kaynak: PDF sayfa X" veya "Kaynak: PDF'teki ilgili ifade" satırı ekle.
 `;
 
   return safeCallOpenAi(prompt);

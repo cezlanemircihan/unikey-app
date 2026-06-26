@@ -211,24 +211,24 @@ export function buildSummary(text: string, courseName: string) {
   const likelyQuestions = buildLikelyExamQuestions(keywords, concepts);
 
   return [
-    `${courseName} - PDF Özeti`,
+    `${courseName} - Sınav Özeti`,
     "",
-    "Genel Çerçeve",
+    "Bu PDF ne anlatıyor?",
     ...overview.map((sentence) => `• ${polishSentence(sentence)}`),
     "",
-    "Vize/Final İçin Bilmen Gerekenler",
-    ...examPoints.map((sentence, index) => `${index + 1}. ${polishSentence(sentence)}`),
+    "Mutlaka bilmen gereken 3 şey",
+    ...examPoints.slice(0, 3).map((sentence, index) => `${index + 1}. ${polishSentence(sentence)}`),
     "",
-    "Temel Kavramlar",
+    "Kritik kavramlar",
     ...concepts.map(
       ({ keyword, sentence }) =>
         `• ${titleCase(humanizeTerm(keyword))}: ${polishSentence(sentence)}`,
     ),
     "",
-    "Muhtemel Soru Tarzları",
+    "Sınavda nasıl gelir?",
     ...likelyQuestions.map((question) => `• ${question}`),
     "",
-    "Kısa Tekrar",
+    "Ezber kartları",
     `Bu PDF'te özellikle ${keywords
       .slice(0, 5)
       .map((keyword) => titleCase(humanizeTerm(keyword)))
@@ -262,8 +262,9 @@ export function answerFromText(text: string, question: string) {
   }
 
   return [
-    "PDF içeriğine göre en ilgili açıklama şu:",
+    "PDF Asistanı cevabı:",
     ...matches.map((match) => `• ${match.sentence}`),
+    "Kaynak: PDF'teki ilgili ifade",
   ].join("\n");
 }
 
@@ -295,7 +296,7 @@ export function buildQuiz(text: string, courseName: string): QuizQuestion[] {
 
   return [
     {
-      question: "Bu PDF'in vize/final çalışması açısından ana odağı nedir?",
+      question: `${titleCase(humanizeTerm(firstKeyword))} konusu bu derste neden önemlidir?`,
       options: shuffleOptions([
         trimOption(sourceSentence),
         "Kullanıcının hesap şifresini açıklamak",
@@ -303,10 +304,10 @@ export function buildQuiz(text: string, courseName: string): QuizQuestion[] {
         "PDF dosyasının yalnızca adını saklamak",
       ]),
       answer: trimOption(sourceSentence),
-      source: sourceSentence,
+      source: `Doğru cevap PDF'teki ana açıklamaya dayanıyor. Kaynak: ${sourceSentence}`,
     },
     {
-      question: `"${firstKeyword}" kavramı PDF içinde hangi bağlamda geçiyor?`,
+      question: `${titleCase(humanizeTerm(firstKeyword))} ile ilgili doğru ifade hangisidir?`,
       options: shuffleOptions([
         trimOption(sourceSentence),
         trimOption(secondSentence),
@@ -314,18 +315,21 @@ export function buildQuiz(text: string, courseName: string): QuizQuestion[] {
         "Sadece uygulama ayarı olarak",
       ]),
       answer: trimOption(sourceSentence),
-      source: sourceSentence,
+      source: `Doğru cevap bu kavramın PDF'teki kullanımını açıklar. Kaynak: ${sourceSentence}`,
     },
     {
-      question: "Aşağıdakilerden hangisi bu PDF'te öne çıkan kavramlardan biridir?",
+      question: "Sınav öncesi tekrar yaparken hangi kavramı özellikle bilmelisin?",
       options: shuffleOptions([
-        firstKeyword,
-        secondKeyword,
-        thirdKeyword,
+        titleCase(humanizeTerm(firstKeyword)),
+        titleCase(humanizeTerm(secondKeyword)),
+        titleCase(humanizeTerm(thirdKeyword)),
         "e-posta doğrulama kodu",
       ]),
-      answer: firstKeyword,
-      source: keywords.join(", "),
+      answer: titleCase(humanizeTerm(firstKeyword)),
+      source: `Doğru cevap PDF'te en sık ve merkezi görünen kavramlardan biridir. Kaynak: ${keywords
+        .slice(0, 4)
+        .map((keyword) => titleCase(humanizeTerm(keyword)))
+        .join(", ")}`,
     },
   ];
 }
@@ -411,7 +415,25 @@ function buildLikelyExamQuestions(
 }
 
 function humanizeTerm(term: string) {
-  return term
+  const normalized = term.toLocaleLowerCase("tr").trim();
+  const replacements: Record<string, string> = {
+    "chapter fifteen": "socket programlamaya giriş",
+    "fifteen sockets": "socket programlama",
+    sockets: "socket programlama",
+    socket: "socket programlama",
+    "struct sockaddr": "adres yapıları",
+    sockaddr: "adres yapıları",
+    "byte order": "byte sıralaması",
+    port: "portlar ve adresleme",
+    ports: "portlar ve adresleme",
+    "tcp connection": "tcp bağlantısı",
+    "operating system": "işletim sistemi",
+  };
+
+  if (replacements[normalized]) return replacements[normalized];
+
+  return normalized
+    .replace(/^chapter\s+\w+\s*/i, "")
     .replaceAll("algoritmalari", "algoritmaları")
     .replaceAll("degerlendirme", "değerlendirme")
     .replaceAll("siniflandirma", "sınıflandırma")

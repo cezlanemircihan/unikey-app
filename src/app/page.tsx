@@ -134,7 +134,7 @@ export default function Home() {
   const topics = useMemo(() => {
     const keywords = currentDocument?.keywords ?? [];
     return keywords.length > 0
-      ? keywords.slice(0, 8).map((keyword) => titleCase(keyword))
+      ? keywords.slice(0, 8).map((keyword) => humanizeTopic(keyword))
       : fallbackTopics;
   }, [currentDocument]);
   const correctCount = currentQuiz.reduce((count, item, index) => {
@@ -909,6 +909,14 @@ function Dashboard({
         </div>
       </section>
 
+      <section className="today-plan-card">
+        <div>
+          <span>Bugünün planı</span>
+          <strong>18 dk tekrar · 8 quiz · 3 zayıf konu</strong>
+        </div>
+        <button onClick={onContinue}>Çalışmaya Başla</button>
+      </section>
+
       <section className="dashboard-section">
         <div className="section-title">
           <h2>Ders bazlı çalışma</h2>
@@ -932,6 +940,30 @@ function Dashboard({
             <span>+</span>
             Yeni PDF / Ders Ekle
           </button>
+        </div>
+      </section>
+
+      <section className="recent-pdf-card">
+        <div className="section-title">
+          <h2>Son yüklenen PDF’ler</h2>
+          <button onClick={onNewCourse}>PDF ekle</button>
+        </div>
+        <div>
+          {(documents.length > 0
+            ? documents.map((document) => ({
+                name: document.name,
+                detail: `${document.keywords.length || 8} konu çıkarıldı`,
+              }))
+            : [
+                { name: "Chapter15.pdf", detail: "8 konu çıkarıldı" },
+                { name: "VeriYapıları.pdf", detail: "34 quiz hazır" },
+              ]
+          ).slice(0, 3).map((document) => (
+            <p key={document.name}>
+              <strong>{document.name}</strong>
+              <span>{document.detail}</span>
+            </p>
+          ))}
         </div>
       </section>
 
@@ -1164,7 +1196,7 @@ function CourseReadyStep({
       {summary && (
         <article className="summary-preview">
           <h3>Akıllı Özet</h3>
-          <p>{summary}</p>
+          <SummaryCards summary={summary} />
         </article>
       )}
       <div className="topic-grid">
@@ -1428,6 +1460,10 @@ function QuizResult({
             <span>Zayıf konu görünmüyor; tekrar için karışık soru çöz.</span>
           )}
         </div>
+        <div className="recommended-repeat">
+          <strong>Önerilen tekrar</strong>
+          <p>12 dakikalık mini çalışma: önce yanlış konuları oku, sonra benzer 5 soru çöz.</p>
+        </div>
       </section>
       <section className="next-card">
         <h3>Ne yapmak istersin?</h3>
@@ -1469,12 +1505,31 @@ function SummaryReview({
       <section className="review-content">
         <small>{courseName} · Özet</small>
         <h2>{topics[0] || "Ders Özeti"}</h2>
-        <p>{currentDocument?.summary || "Bu ders için özet henüz oluşturulmadı."}</p>
+        {currentDocument?.summary ? (
+          <SummaryCards summary={currentDocument.summary} />
+        ) : (
+          <p>Bu ders için özet henüz oluşturulmadı.</p>
+        )}
         <div className="action-row">
           <button onClick={onBack} className="secondary-button">← Önceki</button>
           <button onClick={onNext} className="primary-button">Sonraki →</button>
         </div>
       </section>
+    </div>
+  );
+}
+
+function SummaryCards({ summary }: { summary: string }) {
+  const cards = parseSummaryCards(summary);
+
+  return (
+    <div className="summary-card-grid">
+      {cards.map((card) => (
+        <section key={card.title} className="summary-card">
+          <h4>{card.title}</h4>
+          <p>{card.content}</p>
+        </section>
+      ))}
     </div>
   );
 }
@@ -1499,6 +1554,74 @@ function titleCase(value: string) {
     .split(" ")
     .map((word) => word.charAt(0).toLocaleUpperCase("tr") + word.slice(1))
     .join(" ");
+}
+
+function humanizeTopic(topic: string) {
+  const normalized = topic.toLocaleLowerCase("tr").trim();
+  const replacements: Record<string, string> = {
+    "chapter fifteen": "Socket Programlamaya Giriş",
+    "fifteen sockets": "Socket Programlama",
+    sockets: "Socket Programlama",
+    socket: "Socket Programlama",
+    "struct sockaddr": "Adres Yapıları",
+    sockaddr: "Adres Yapıları",
+    "byte order": "Byte Sıralaması",
+    port: "Portlar ve Adresleme",
+    ports: "Portlar ve Adresleme",
+    "tcp connection": "TCP Bağlantısı",
+    "operating system": "İşletim Sistemi",
+  };
+
+  if (replacements[normalized]) return replacements[normalized];
+
+  return titleCase(
+    normalized
+      .replace(/^chapter\s+\w+\s*/i, "")
+      .replace(/\b(fifteen|chapter|lecture|notes?)\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim() || topic,
+  );
+}
+
+function parseSummaryCards(summary: string) {
+  const normalized = summary.replace(/\r/g, "").trim();
+  const defaultTitles = [
+    "Bu PDF ne anlatıyor?",
+    "Mutlaka bilmen gereken 3 şey",
+    "Kritik kavramlar",
+    "Sınavda nasıl gelir?",
+    "Ezber kartları",
+  ];
+  const headingPattern = new RegExp(
+    `(?:^|\\n)\\s*(?:\\d+\\.\\s*)?(${defaultTitles
+      .map((title) => title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|")})\\s*\\n`,
+    "gi",
+  );
+  const matches = [...normalized.matchAll(headingPattern)];
+
+  if (matches.length === 0) {
+    const chunks = normalized
+      .split(/\n\s*\n/)
+      .map((chunk) => chunk.trim())
+      .filter(Boolean);
+
+    return defaultTitles.map((title, index) => ({
+      title,
+      content:
+        chunks[index] ||
+        "Bu bölüm için AI çıktısı geldikçe daha net sınav notu oluşturulacak.",
+    }));
+  }
+
+  return matches.map((match, index) => {
+    const start = (match.index ?? 0) + match[0].length;
+    const end = matches[index + 1]?.index ?? normalized.length;
+    return {
+      title: match[1],
+      content: normalized.slice(start, end).trim() || "Bu bölüm yakında doldurulacak.",
+    };
+  });
 }
 
 function inferCourseNameFromFile(fileName: string) {
@@ -1552,7 +1675,7 @@ async function extractPdfTextFromFile(file: File) {
       .filter(Boolean)
       .join(" ");
 
-    pages.push(text);
+    pages.push(`[Sayfa ${pageNumber}] ${text}`);
   }
 
   return {
