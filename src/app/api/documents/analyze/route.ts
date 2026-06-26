@@ -3,6 +3,8 @@ import {
   buildQuiz,
   buildSummary,
   buildTopics,
+  buildStructuredQuiz,
+  buildStructuredSummary,
   cleanText,
 } from "@/lib/study-engine";
 import { generateAiStudyPack } from "@/lib/ai-study";
@@ -30,17 +32,31 @@ export async function POST(request: Request) {
       );
     }
 
+    const localTopics = buildTopics(text, 10);
+    const localStructuredSummary = buildStructuredSummary(text, courseName);
+    const localStructuredQuiz = buildStructuredQuiz(text, courseName);
     const localPack = {
       summary: buildSummary(text, courseName),
-      keywords: buildTopics(text, 10).map((topic) => topic.title),
+      keywords: localTopics.map((topic) => topic.title),
       quiz: buildQuiz(text, courseName),
+      topics: localTopics,
+      structuredSummary: localStructuredSummary,
+      structuredQuiz: localStructuredQuiz,
     };
     const aiPack = await generateAiStudyPack({
       courseName,
       documentName: document.name,
       text,
     });
-    const pack = aiPack ?? localPack;
+    const pack = {
+      ...localPack,
+      ...aiPack,
+      topics: aiPack?.topics?.length ? aiPack.topics : localPack.topics,
+      structuredSummary: aiPack?.structuredSummary ?? localPack.structuredSummary,
+      structuredQuiz: aiPack?.structuredQuiz?.length
+        ? aiPack.structuredQuiz
+        : localPack.structuredQuiz,
+    };
 
     return NextResponse.json({
       name: document.name,
@@ -49,10 +65,12 @@ export async function POST(request: Request) {
       summary: pack.summary,
       keywords: pack.keywords,
       quiz: pack.quiz,
+      topics: pack.topics,
+      structuredSummary: pack.structuredSummary,
+      structuredQuiz: pack.structuredQuiz,
       engine: aiPack ? "ai" : "local",
     });
   } catch (error) {
-    console.error(error);
     return NextResponse.json(
       {
         error:

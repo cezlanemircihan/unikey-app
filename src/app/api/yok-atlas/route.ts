@@ -72,8 +72,7 @@ export async function GET(request: Request) {
       { error: "Geçersiz YÖK Atlas veri tipi." },
       { status: 400 },
     );
-  } catch (error) {
-    console.error("YÖK Atlas veri hatası:", error);
+  } catch {
     return NextResponse.json(
       { error: "YÖK Atlas verisi alınamadı." },
       { status: 502 },

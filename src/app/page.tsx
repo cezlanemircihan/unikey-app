@@ -5,7 +5,13 @@ import {
   commonDepartments,
   turkeyUniversities,
 } from "@/lib/turkey-universities";
-import type { QuizQuestion as StudyQuizQuestion } from "@/lib/study-engine";
+import {
+  buildQuizResultAnalysis,
+  type QuizQuestion as StudyQuizQuestion,
+  type StudySummary,
+  type StudyTopic,
+  type StructuredQuizQuestion,
+} from "@/lib/study-engine";
 
 type Screen =
   | "auth"
@@ -28,6 +34,9 @@ type DocumentItem = {
   summary: string;
   keywords: string[];
   quiz: StudyQuizQuestion[];
+  topics?: StudyTopic[];
+  structuredSummary?: StudySummary;
+  structuredQuiz?: StructuredQuizQuestion[];
 };
 
 type AnalyzeResponse = {
@@ -37,6 +46,9 @@ type AnalyzeResponse = {
   summary: string;
   keywords: string[];
   quiz: StudyQuizQuestion[];
+  topics?: StudyTopic[];
+  structuredSummary?: StudySummary;
+  structuredQuiz?: StructuredQuizQuestion[];
   error?: string;
 };
 
@@ -241,6 +253,9 @@ export default function Home() {
           summary: payload.summary,
           keywords: payload.keywords,
           quiz: payload.quiz,
+          topics: payload.topics,
+          structuredSummary: payload.structuredSummary,
+          structuredQuiz: payload.structuredQuiz,
         },
       ]);
       setSelectedFile(null);
@@ -1385,7 +1400,7 @@ function QuizScreen({
         {selected && (
           <div className="feedback-box">
             <strong>{selected === question.answer ? "Doğru!" : "Tekrar bak"}</strong>
-            <p>{question.source}</p>
+            <p>{question.explanation ?? question.source}</p>
           </div>
         )}
         <button
@@ -1435,12 +1450,18 @@ function QuizResult({
   onDashboard: () => void;
 }) {
   const score = total > 0 ? Math.round((correctCount / total) * 100) : 0;
+  const resultAnalysis = buildQuizResultAnalysis(quiz, selectedAnswers);
   const wrongItems = quiz
     .map((question, index) => ({ question, index, selected: selectedAnswers[index] }))
     .filter((item) => item.selected && item.selected !== item.question.answer);
   const weakTopics = wrongItems.length > 0
-    ? wrongItems.map((item) => topics[item.index % topics.length] || item.question.question)
-    : topics.slice(0, 3);
+    ? wrongItems.map(
+        (item) =>
+          item.question.topic || topics[item.index % topics.length] || item.question.question,
+      )
+    : resultAnalysis.weakTopics;
+  const strongTopics = resultAnalysis.strongTopics;
+  const displayedTopics = [...strongTopics, ...weakTopics].slice(0, 4);
 
   return (
     <div className="result-page">
@@ -1454,11 +1475,11 @@ function QuizResult({
         <div className="result-breakdown">
           <span>Doğru: {correctCount}</span>
           <span>Yanlış: {Math.max(total - correctCount, 0)}</span>
-          <span>Tahmini tekrar: 8 dakika</span>
+          <span>Tahmini tekrar: {resultAnalysis.recommendedReviewMinutes} dakika</span>
           <span>Başarı tahmini: %{Math.min(95, score + 29)}</span>
         </div>
-        {topics.slice(0, 4).map((topic, index) => (
-          <p key={topic} className={index < 3 ? "good" : "weak"}>
+        {(displayedTopics.length > 0 ? displayedTopics : topics.slice(0, 4)).map((topic) => (
+          <p key={topic} className={weakTopics.includes(topic) ? "weak" : "good"}>
             {topic}
           </p>
         ))}
@@ -1472,7 +1493,7 @@ function QuizResult({
         </div>
         <div className="recommended-repeat">
           <strong>Önerilen tekrar</strong>
-          <p>12 dakikalık mini çalışma: önce yanlış konuları oku, sonra benzer 5 soru çöz.</p>
+          <p>{resultAnalysis.shortFeedback}</p>
         </div>
       </section>
       <section className="next-card">

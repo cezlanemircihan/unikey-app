@@ -1,9 +1,19 @@
-import type { QuizQuestion } from "@/lib/study-engine";
+import {
+  formatStructuredSummary,
+  type QuizDifficulty,
+  type QuizQuestion,
+  type StudySummary,
+  type StudyTopic,
+  type StructuredQuizQuestion,
+} from "@/lib/study-engine";
 
 type StudyPack = {
   summary: string;
   keywords: string[];
   quiz: QuizQuestion[];
+  topics?: StudyTopic[];
+  structuredSummary?: StudySummary;
+  structuredQuiz?: StructuredQuizQuestion[];
 };
 
 type OpenAIResponse = {
@@ -15,6 +25,10 @@ type OpenAIResponse = {
     }>;
   }>;
 };
+
+type RawTopic = Partial<StudyTopic>;
+type RawSummary = Partial<StudySummary>;
+type RawQuizQuestion = Partial<StructuredQuizQuestion> & Partial<QuizQuestion>;
 
 const openAiEndpoint = "https://api.openai.com/v1/responses";
 const defaultModel = "gpt-4.1";
@@ -31,10 +45,9 @@ export async function generateAiStudyPack({
   if (!hasOpenAiKey()) return null;
 
   const prompt = `
-Sen ÜniKEY uygulamasının vize/final odaklı ders asistanısın.
-Amaç uzun vadeli çalışma planı yapmak değil. Sadece öğrencinin yüklediği PDF'e göre güçlü bir çalışma özeti ve quiz üret.
-Özet kalitesi, öğrencinin PDF'i doğrudan iyi bir öğretmene verdiğinde bekleyeceği seviyede olmalı: kopya cümle yığını değil, düzenlenmiş sınav notu gibi.
-PDF hangi dilde olursa olsun öğrenciye her zaman Türkçe anlat. Teknik terimler hariç bütün anlatım Türkçe olsun. İngilizce terimi gerekiyorsa Türkçe açıklamayla birlikte kullan: "socket (ağ iletişim kapısı)" gibi.
+Sen ÜniKEY uygulamasının vize/final odaklı AI sınav koçusun.
+Amaç PDF özetleyici gibi ham metin kopyalamak değil; PDF'i anlayıp öğrencinin sınavda kullanacağı öğretilebilir Türkçe çalışma çıktısı üretmek.
+PDF hangi dilde olursa olsun öğrenciye her zaman Türkçe anlat. Teknik terimler korunabilir ama açıklamaları Türkçe olmalı.
 
 Ders: ${courseName}
 PDF adı: ${documentName}
@@ -42,45 +55,67 @@ PDF adı: ${documentName}
 PDF metni:
 ${limitText(text)}
 
-Yalnızca geçerli JSON döndür. Markdown kullanma.
-JSON şeması:
+Yalnızca parse edilebilir JSON döndür. Markdown, açıklama, kod bloğu veya JSON dışı metin yazma.
+JSON şeması tam olarak şu yapıda olsun:
 {
-  "summary": "Türkçe, başlıklı, sınava yönelik özet.",
-  "keywords": ["anahtar kelime değil, 6-8 adet Türkçe konu başlığı"],
+  "topics": [
+    {
+      "title": "Doğal, öğretilebilir Türkçe konu başlığı",
+      "shortDescription": "Bu konunun 1 cümlelik Türkçe açıklaması",
+      "whyImportant": "Sınav veya ders açısından neden önemli olduğu",
+      "examLikelihood": "low | medium | high",
+      "sourcePages": [1]
+    }
+  ],
+  "summary": {
+    "shortOverview": "Bu PDF ne anlatıyor? 2-3 cümlelik Türkçe cevap",
+    "mustKnow": ["Mutlaka bilinmesi gereken 3 madde"],
+    "keyConcepts": [
+      {
+        "term": "Kavram adı",
+        "explanation": "Öğrenciye anlatır gibi Türkçe açıklama",
+        "sourcePage": 1
+      }
+    ],
+    "examStyleQuestions": ["Vize/final tarzı doğal soru"],
+    "commonConfusions": ["Karıştırılan nokta"],
+    "flashcards": [
+      {
+        "front": "Kısa kart sorusu",
+        "back": "Kısa Türkçe cevap"
+      }
+    ]
+  },
   "quiz": [
     {
-      "question": "Doğal ve sınav tarzı çoktan seçmeli soru",
+      "question": "Gerçek vize/final sorusu gibi doğal çoktan seçmeli soru",
       "options": ["4 seçenek"],
-      "answer": "options içindeki doğru cevabın aynısı",
-      "source": "Doğru cevap açıklaması. Ham PDF cümlesi yazma. Sonunda mümkünse Kaynak: PDF sayfa X"
+      "correctAnswer": "options içindeki doğru cevabın aynısı",
+      "explanation": "Doğru cevabı öğretici biçimde açıkla; sadece doğru cevap budur deme",
+      "topic": "Sorunun bağlı olduğu konu başlığı",
+      "difficulty": "easy | medium | hard",
+      "sourcePage": 1
     }
   ]
 }
 
-Kurallar:
-- Summary alanını mutlaka şu başlıklarla yaz:
-  1. Bu PDF ne anlatıyor?
-  2. Mutlaka bil
-  3. Sınavda çıkabilecek sorular
-  4. Hoca nereden sorabilir?
-  5. Karıştırılan noktalar
-- "Bu PDF ne anlatıyor?" bölümü 2-3 cümle olsun.
-- "Mutlaka bil" bölümü tam 3 madde olsun.
-- "Sınavda çıkabilecek sorular" bölümü 3 madde olsun.
-- "Hoca nereden sorabilir?" bölümü 2 madde olsun.
-- "Karıştırılan noktalar" bölümü 2 madde olsun.
-- "Chapter Fifteen", "Fifteen Sockets", "Struct Sockaddr" gibi ham başlıkları aynen taşıma. Bunları "Socket Programlamaya Giriş", "Portlar ve Adresleme", "Adres Yapıları" gibi öğrenciye anlamlı Türkçe konu başlıklarına dönüştür.
-- keywords alanına asla "File Systems", "Unix File", "Working Directory", "Other", "Command" gibi ham anahtar kelimeler yazma. Anahtar kelime çıkarma; konu çıkar. Örnek: "UNIX Dosya Sistemi Nedir?", "Working Directory Mantığı", "UNIX'te Her Şey Dosyadır", "Dosya Türleri", "NFS ve Ağ Dosya Sistemleri".
-- PDF'teki dağınık metni toparla, benzer noktaları birleştir, kavramları öğrenciye anlatır gibi açıkla.
-- Özet ne çok yüzeysel ne de gereksiz uzun olsun; sınav öncesi tekrar notu gibi işe yarasın.
-- En fazla 5 quiz sorusu üret.
-- Quiz soruları "X kavramı PDF içinde hangi bağlamda geçiyor?" gibi robotik olmasın. Doğal sınav sorusu yaz: "TCP bağlantısının temel amacı nedir?" gibi.
-- Her quiz source alanında "Doğru cevap ... Çünkü ..." diye kısa açıklama ver.
-- Quiz answer/options alanlarına "[Sayfa 1] Chapter..." gibi ham PDF cümlesi koyma.
-- Sadece PDF metnine dayan.
-- Bilgi PDF'te yoksa uydurma.
-- Türkçe karakter kullan.
-- Sorular vize/final mantığına yakın olsun.
+Zorunlu kurallar:
+- Bütün anlatım Türkçe olacak. PDF İngilizce olsa bile Türkçe anlat.
+- Teknik terimler gerektiğinde korunabilir: socket, TCP, working directory, NFS gibi. Ama cümle Türkçe olmalı.
+- "File Systems", "Unix File", "Other", "Command", "Chapter Fifteen" gibi ham anahtar kelime başlıkları üretme.
+- Anahtar kelime çıkarma; konu çıkar. Örnek: "UNIX Dosya Sistemi Temelleri", "Working Directory ve Path Mantığı", "UNIX'te Everything is a File Yaklaşımı".
+- PDF'ten ham satır, kod bloğu, shell script, "[Sayfa 1] Chapter..." gibi metinleri cevap olarak kopyalama.
+- Summary tek uzun paragraf olmasın; alanları doldur.
+- mustKnow tam 3 madde olsun.
+- keyConcepts 4-6 madde olsun.
+- examStyleQuestions 3 madde olsun.
+- commonConfusions 2-3 madde olsun.
+- flashcards 4-6 kart olsun.
+- quiz 4-5 soru olsun.
+- Quiz soruları "X konusu neden önemlidir?" gibi jenerik olmasın. Kavramı ölçen doğal soru yaz.
+- Quiz açıklaması öğrencinin yanlışını düzeltecek kadar öğretici olsun.
+- sourcePages ve sourcePage sadece sayı olsun. Sayfa bilinmiyorsa 1 yaz.
+- PDF'te olmayan bilgiyi uydurma.
 `;
 
   const output = await safeCallOpenAi(prompt);
@@ -102,8 +137,7 @@ export async function generateAiAnswer({
 Sen ÜniKEY uygulamasının PDF'e bağlı soru-cevap asistanısın.
 Öğrencinin sorusunu sadece aşağıdaki PDF metnine göre cevapla.
 PDF'te cevap yoksa açıkça "Bu bilgi PDF içinde net görünmüyor" de.
-Uzun vadeli çalışma planı önerme.
-PDF hangi dilde olursa olsun cevabı Türkçe ver. Teknik terimler hariç bütün kelimeleri Türkçe kullan. Yabancı terimi gerektiğinde parantez içinde koruyup Türkçe açıkla.
+PDF hangi dilde olursa olsun cevabı Türkçe ver. Teknik terimler hariç bütün kelimeleri Türkçe kullan.
 
 Öğrencinin sorusu:
 ${question}
@@ -111,8 +145,13 @@ ${question}
 PDF metni:
 ${limitText(text)}
 
-Cevabı Türkçe, kısa ve anlaşılır ver. Gerekirse maddeler kullan.
-Sonuna mümkünse "Kaynak: PDF sayfa X" veya "Kaynak: PDF'teki ilgili ifade" satırı ekle.
+Cevabı Türkçe, kısa ve anlaşılır ver.
+Ham PDF satırı, kod bloğu veya İngilizce paragraf kopyalama.
+Gerekirse şu yapıdan birini kullan:
+- Kısa cevap
+- Neden önemli?
+- Sınavda nasıl sorulabilir?
+Sonuna mümkünse "Kaynak: PDF sayfa X" satırı ekle.
 `;
 
   return safeCallOpenAi(prompt);
@@ -132,15 +171,11 @@ async function callOpenAi(prompt: string) {
     body: JSON.stringify({
       model: process.env.OPENAI_MODEL || defaultModel,
       input: prompt,
-      temperature: 0.2,
+      temperature: 0.15,
     }),
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error("OpenAI request failed:", response.status, errorText);
-    return null;
-  }
+  if (!response.ok) return null;
 
   const payload = (await response.json()) as OpenAIResponse;
   return extractOutputText(payload);
@@ -149,8 +184,7 @@ async function callOpenAi(prompt: string) {
 async function safeCallOpenAi(prompt: string) {
   try {
     return await callOpenAi(prompt);
-  } catch (error) {
-    console.error("OpenAI request error:", error);
+  } catch {
     return null;
   }
 }
@@ -175,46 +209,245 @@ function parseStudyPack(output: string): StudyPack | null {
     .trim();
 
   try {
-    const parsed = JSON.parse(jsonText) as Partial<StudyPack>;
-    if (
-      typeof parsed.summary !== "string" ||
-      !Array.isArray(parsed.keywords) ||
-      !Array.isArray(parsed.quiz)
-    ) {
-      return null;
+    const parsed = JSON.parse(jsonText) as {
+      topics?: RawTopic[];
+      summary?: RawSummary | string;
+      keywords?: string[];
+      quiz?: RawQuizQuestion[];
+    };
+    const topics = normalizeTopics(parsed.topics);
+    const structuredSummary =
+      typeof parsed.summary === "object"
+        ? normalizeSummary(parsed.summary)
+        : null;
+    const structuredQuiz = normalizeStructuredQuiz(parsed.quiz);
+
+    if (structuredSummary && structuredQuiz.length > 0) {
+      return {
+        summary: formatStructuredSummary(structuredSummary),
+        keywords: topics.length > 0 ? topics.map((topic) => topic.title) : inferKeywords(structuredQuiz),
+        quiz: structuredQuiz.map(toLegacyQuizQuestion),
+        topics,
+        structuredSummary,
+        structuredQuiz,
+      };
     }
 
-    return {
-      summary: parsed.summary,
-      keywords: parsed.keywords.filter((keyword) => typeof keyword === "string"),
-      quiz: parsed.quiz
-        .filter(isQuizQuestion)
-        .map((question) => ({
-          question: question.question,
-          options: question.options.slice(0, 4),
-          answer: question.answer,
-          source: question.source,
-        })),
-    };
+    if (
+      typeof parsed.summary === "string" &&
+      Array.isArray(parsed.keywords) &&
+      Array.isArray(parsed.quiz)
+    ) {
+      const legacyQuiz = parsed.quiz.filter(isLegacyQuizQuestion).map((question) => ({
+        question: sanitizeText(question.question ?? ""),
+        options: normalizeOptions(question.options ?? []),
+        answer: sanitizeText(question.answer ?? ""),
+        source: sanitizeText(question.source ?? question.explanation ?? ""),
+      }));
+
+      if (legacyQuiz.length === 0) return null;
+
+      return {
+        summary: sanitizeText(parsed.summary),
+        keywords: parsed.keywords.filter((keyword) => typeof keyword === "string").map(sanitizeText),
+        quiz: legacyQuiz,
+      };
+    }
+
+    return null;
   } catch {
     return null;
   }
 }
 
-function isQuizQuestion(value: unknown): value is QuizQuestion {
-  if (!value || typeof value !== "object") return false;
+function normalizeTopics(topics: RawTopic[] | undefined): StudyTopic[] {
+  if (!Array.isArray(topics)) return [];
 
-  const question = value as Partial<QuizQuestion>;
+  return topics
+    .map((topic) => ({
+      title: sanitizeText(topic.title),
+      shortDescription: sanitizeText(topic.shortDescription),
+      whyImportant: sanitizeText(topic.whyImportant),
+      examLikelihood: normalizeExamLikelihood(topic.examLikelihood),
+      sourcePages: normalizeSourcePages(topic.sourcePages),
+    }))
+    .filter(
+      (topic) =>
+        topic.title.length > 4 &&
+        topic.shortDescription.length > 12 &&
+        !looksLikeRawPdfDump(topic.title),
+    )
+    .slice(0, 10);
+}
+
+function normalizeSummary(summary: RawSummary): StudySummary | null {
+  if (!summary || typeof summary !== "object") return null;
+  const shortOverview = sanitizeText(summary.shortOverview);
+  const mustKnow = normalizeStringArray(summary.mustKnow, 3);
+  const keyConcepts = Array.isArray(summary.keyConcepts)
+    ? summary.keyConcepts
+        .map((concept) => ({
+          term: sanitizeText(concept?.term),
+          explanation: sanitizeText(concept?.explanation),
+          sourcePage: normalizePage(concept?.sourcePage),
+        }))
+        .filter(
+          (concept) =>
+            concept.term.length > 2 &&
+            concept.explanation.length > 12 &&
+            !looksLikeRawPdfDump(concept.explanation),
+        )
+        .slice(0, 6)
+    : [];
+  const examStyleQuestions = normalizeStringArray(summary.examStyleQuestions, 3);
+  const commonConfusions = normalizeStringArray(summary.commonConfusions, 3);
+  const flashcards = Array.isArray(summary.flashcards)
+    ? summary.flashcards
+        .map((card) => ({
+          front: sanitizeText(card?.front),
+          back: sanitizeText(card?.back),
+        }))
+        .filter((card) => card.front.length > 4 && card.back.length > 8)
+        .slice(0, 6)
+    : [];
+
+  if (
+    shortOverview.length < 20 ||
+    mustKnow.length === 0 ||
+    keyConcepts.length === 0 ||
+    examStyleQuestions.length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    shortOverview,
+    mustKnow,
+    keyConcepts,
+    examStyleQuestions,
+    commonConfusions,
+    flashcards,
+  };
+}
+
+function normalizeStructuredQuiz(
+  quiz: RawQuizQuestion[] | undefined,
+): StructuredQuizQuestion[] {
+  if (!Array.isArray(quiz)) return [];
+
+  return quiz
+    .map((question) => {
+      const options = normalizeOptions(question.options ?? []);
+      const correctAnswer = sanitizeText(question.correctAnswer ?? question.answer);
+
+      return {
+        question: sanitizeText(question.question),
+        options,
+        correctAnswer,
+        explanation: sanitizeText(question.explanation ?? question.source),
+        topic: sanitizeText(question.topic),
+        difficulty: normalizeDifficulty(question.difficulty),
+        sourcePage: normalizePage(question.sourcePage),
+      };
+    })
+    .filter(
+      (question) =>
+        question.question.length > 12 &&
+        question.options.length >= 4 &&
+        question.options.includes(question.correctAnswer) &&
+        question.explanation.length > 20 &&
+        question.topic.length > 3 &&
+        !looksLikeRawPdfDump(question.question) &&
+        !looksLikeRawPdfDump(question.correctAnswer),
+    )
+    .slice(0, 5);
+}
+
+function toLegacyQuizQuestion(question: StructuredQuizQuestion): QuizQuestion {
+  return {
+    question: question.question,
+    options: question.options.slice(0, 4),
+    answer: question.correctAnswer,
+    source: `${question.explanation} Kaynak: PDF sayfa ${question.sourcePage}`,
+    explanation: question.explanation,
+    topic: question.topic,
+    difficulty: question.difficulty,
+    sourcePage: question.sourcePage,
+  };
+}
+
+function isLegacyQuizQuestion(value: RawQuizQuestion): value is QuizQuestion {
   return (
-    typeof question.question === "string" &&
-    Array.isArray(question.options) &&
-    question.options.every((option) => typeof option === "string") &&
-    question.options.length >= 2 &&
-    typeof question.answer === "string" &&
-    typeof question.source === "string"
+    typeof value.question === "string" &&
+    Array.isArray(value.options) &&
+    value.options.every((option) => typeof option === "string") &&
+    value.options.length >= 2 &&
+    typeof value.answer === "string" &&
+    typeof value.source === "string"
+  );
+}
+
+function normalizeStringArray(value: unknown, limit: number) {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item) => typeof item === "string")
+    .map(sanitizeText)
+    .filter((item) => item.length > 6 && !looksLikeRawPdfDump(item))
+    .slice(0, limit);
+}
+
+function normalizeOptions(options: string[]) {
+  return [...new Set(options.map(sanitizeText))]
+    .filter((option) => option.length > 2 && !looksLikeRawPdfDump(option))
+    .slice(0, 4);
+}
+
+function normalizeExamLikelihood(value: unknown): "low" | "medium" | "high" {
+  return value === "low" || value === "medium" || value === "high"
+    ? value
+    : "medium";
+}
+
+function normalizeDifficulty(value: unknown): QuizDifficulty {
+  return value === "easy" || value === "medium" || value === "hard"
+    ? value
+    : "medium";
+}
+
+function normalizeSourcePages(value: unknown) {
+  if (!Array.isArray(value)) return [1];
+  const pages = value
+    .map((page) => Number(page))
+    .filter((page) => Number.isFinite(page) && page > 0);
+
+  return [...new Set(pages)].slice(0, 4).length > 0
+    ? [...new Set(pages)].slice(0, 4)
+    : [1];
+}
+
+function normalizePage(value: unknown) {
+  const page = Number(value);
+  return Number.isFinite(page) && page > 0 ? page : 1;
+}
+
+function inferKeywords(quiz: StructuredQuizQuestion[]) {
+  return [...new Set(quiz.map((question) => question.topic))].slice(0, 8);
+}
+
+function sanitizeText(value: unknown) {
+  return typeof value === "string"
+    ? value.replace(/\s+/g, " ").replace(/\[Sayfa\s+\d+\]\s*/gi, "").trim()
+    : "";
+}
+
+function looksLikeRawPdfDump(value: string) {
+  return (
+    /\b(Chapter|File Systems|Unix File|Other|Command)\b/i.test(value) ||
+    /[$#{};=]|\\n|echo|for\s+.*\s+in|then|fi|done/i.test(value)
   );
 }
 
 function limitText(text: string) {
-  return text.length > 14000 ? `${text.slice(0, 14000)}\n[Metin kısaltıldı]` : text;
+  return text.length > 18000 ? `${text.slice(0, 18000)}\n[Metin kısaltıldı]` : text;
 }
