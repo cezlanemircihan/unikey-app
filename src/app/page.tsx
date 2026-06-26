@@ -7,10 +7,12 @@ import {
 } from "@/lib/turkey-universities";
 import {
   buildQuizResultAnalysis,
+  buildWeakTopicMiniQuiz,
   type QuizQuestion as StudyQuizQuestion,
   type StudySummary,
   type StudyTopic,
   type StructuredQuizQuestion,
+  type WrongAnswerAnalysis,
 } from "@/lib/study-engine";
 
 type Screen =
@@ -133,9 +135,10 @@ export default function Home() {
   const [quizIndex, setQuizIndex] = useState(0);
   const [quizScope, setQuizScope] = useState<"all" | "latest">("all");
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, string>>({});
+  const [reviewQuiz, setReviewQuiz] = useState<StudyQuizQuestion[] | null>(null);
 
   const currentDocument = documents[documents.length - 1];
-  const currentQuiz = useMemo(
+  const baseQuiz = useMemo(
     () =>
       (quizScope === "latest"
         ? (currentDocument?.quiz ?? [])
@@ -143,16 +146,13 @@ export default function Home() {
       ).slice(0, 10),
     [currentDocument, documents, quizScope],
   );
+  const currentQuiz = reviewQuiz ?? baseQuiz;
   const topics = useMemo(() => {
     const keywords = currentDocument?.keywords ?? [];
     return keywords.length > 0
       ? keywords.slice(0, 8).map((keyword) => humanizeTopic(keyword))
       : fallbackTopics;
   }, [currentDocument]);
-  const correctCount = currentQuiz.reduce((count, item, index) => {
-    return selectedAnswers[index] === item.answer ? count + 1 : count;
-  }, 0);
-
   function submitRegister() {
     if (
       !userEmail.trim() ||
@@ -323,6 +323,7 @@ export default function Home() {
     setQuizIndex(0);
     setQuizScope("all");
     setSelectedAnswers({});
+    setReviewQuiz(null);
     setScreen("document-upload");
   }
 
@@ -432,6 +433,7 @@ export default function Home() {
               onStudy={() => setScreen("study-chat")}
               onQuiz={(scope) => {
                 setQuizScope(scope);
+                setReviewQuiz(null);
                 setQuizIndex(0);
                 setSelectedAnswers({});
                 setScreen("quiz");
@@ -455,6 +457,7 @@ export default function Home() {
             onBack={() => setScreen("course-ready")}
             onQuiz={() => {
               setQuizScope("all");
+              setReviewQuiz(null);
               setQuizIndex(0);
               setSelectedAnswers({});
               setScreen("quiz");
@@ -478,12 +481,18 @@ export default function Home() {
 
         {screen === "quiz-result" && (
           <QuizResult
-            correctCount={correctCount}
-            total={currentQuiz.length}
             topics={topics}
             quiz={currentQuiz}
             selectedAnswers={selectedAnswers}
             onMoreQuiz={() => {
+              setReviewQuiz(null);
+              setQuizIndex(0);
+              setSelectedAnswers({});
+              setScreen("quiz");
+            }}
+            onRetryMistakes={() => {
+              const miniQuiz = buildWeakTopicMiniQuiz(currentQuiz, selectedAnswers, topics);
+              setReviewQuiz(miniQuiz);
               setQuizIndex(0);
               setSelectedAnswers({});
               setScreen("quiz");
@@ -491,6 +500,12 @@ export default function Home() {
             onReviewWeak={(weakTopics) => {
               setQuestion(
                 `Yanlış yaptığım şu konuları tekrar anlat: ${weakTopics.join(", ")}. Önce basitçe açıkla, sonra sınavda nasıl sorulabileceğini göster.`,
+              );
+              setScreen("study-chat");
+            }}
+            onReviewMistake={(mistake) => {
+              setQuestion(
+                `${mistake.topic} konusunu kısa ve basit Türkçe anlat. Özellikle şu soruyu neden yanlış yaptığımı açıkla: ${mistake.question}`,
               );
               setScreen("study-chat");
             }}
@@ -1429,76 +1444,100 @@ function QuizScreen({
 }
 
 function QuizResult({
-  correctCount,
-  total,
   topics,
   quiz,
   selectedAnswers,
   onMoreQuiz,
+  onRetryMistakes,
   onReviewWeak,
+  onReviewMistake,
   onReview,
   onDashboard,
 }: {
-  correctCount: number;
-  total: number;
   topics: string[];
   quiz: StudyQuizQuestion[];
   selectedAnswers: Record<number, string>;
   onMoreQuiz: () => void;
+  onRetryMistakes: () => void;
   onReviewWeak: (weakTopics: string[]) => void;
+  onReviewMistake: (mistake: WrongAnswerAnalysis) => void;
   onReview: () => void;
   onDashboard: () => void;
 }) {
-  const score = total > 0 ? Math.round((correctCount / total) * 100) : 0;
-  const resultAnalysis = buildQuizResultAnalysis(quiz, selectedAnswers);
-  const wrongItems = quiz
-    .map((question, index) => ({ question, index, selected: selectedAnswers[index] }))
-    .filter((item) => item.selected && item.selected !== item.question.answer);
-  const weakTopics = wrongItems.length > 0
-    ? wrongItems.map(
-        (item) =>
-          item.question.topic || topics[item.index % topics.length] || item.question.question,
-      )
-    : resultAnalysis.weakTopics;
+  const resultAnalysis = buildQuizResultAnalysis(quiz, selectedAnswers, topics);
+  const score = resultAnalysis.score;
+  const weakTopics = resultAnalysis.weakTopics;
   const strongTopics = resultAnalysis.strongTopics;
   const displayedTopics = [...strongTopics, ...weakTopics].slice(0, 4);
+  const hasMistakes = resultAnalysis.wrongAnswers.length > 0;
 
   return (
     <div className="result-page">
       <section className="score-card">
         <div className="score-ring">{score}%</div>
-        <h2>Harika!</h2>
-        <p>{correctCount} doğru, {Math.max(total - correctCount, 0)} yanlış</p>
+        <h2>{hasMistakes ? "Analiz Hazır" : "Harika!"}</h2>
+        <p>{resultAnalysis.correctCount} doğru, {resultAnalysis.wrongCount} yanlış</p>
       </section>
       <section className="analysis-card">
         <h3>Bugünkü Performans</h3>
         <div className="result-breakdown">
-          <span>Doğru: {correctCount}</span>
-          <span>Yanlış: {Math.max(total - correctCount, 0)}</span>
+          <span>Soru: {resultAnalysis.totalQuestions}</span>
+          <span>Doğru: {resultAnalysis.correctCount}</span>
+          <span>Yanlış: {resultAnalysis.wrongCount}</span>
           <span>Tahmini tekrar: {resultAnalysis.recommendedReviewMinutes} dakika</span>
-          <span>Başarı tahmini: %{Math.min(95, score + 29)}</span>
         </div>
-        {(displayedTopics.length > 0 ? displayedTopics : topics.slice(0, 4)).map((topic) => (
-          <p key={topic} className={weakTopics.includes(topic) ? "weak" : "good"}>
-            {topic}
-          </p>
-        ))}
+        <TopicList
+          title="Güçlü konular"
+          items={strongTopics}
+          emptyText="Güçlü konu analizi için en az bir doğru cevap gerekiyor."
+          tone="good"
+        />
+        <TopicList
+          title="Tekrar edilecek konular"
+          items={weakTopics}
+          emptyText="Belirgin zayıf konu görünmüyor."
+          tone="weak"
+        />
+        {displayedTopics.length === 0 &&
+          topics.slice(0, 4).map((topic) => (
+            <p key={topic} className="good">
+              {topic}
+            </p>
+          ))}
+        <div className="mistake-patterns">
+          <strong>Hata örüntüsü</strong>
+          {resultAnalysis.mistakePatterns.map((pattern) => (
+            <span key={pattern}>{pattern}</span>
+          ))}
+        </div>
         <div className="wrong-topic-card">
-          <strong>Yanlış yaptığın konular</strong>
-          {wrongItems.length > 0 ? (
-            weakTopics.map((topic) => <span key={topic}>{topic}</span>)
+          <strong>Yanlış cevap analizi</strong>
+          {hasMistakes ? (
+            resultAnalysis.wrongAnswers.map((mistake) => (
+              <WrongAnswerCard
+                key={`${mistake.topic}-${mistake.question}`}
+                mistake={mistake}
+                onReview={() => onReviewMistake(mistake)}
+              />
+            ))
           ) : (
-            <span>Zayıf konu görünmüyor; tekrar için karışık soru çöz.</span>
+            <span>Yanlış cevap yok. İstersen daha zor sorularla devam edebilirsin.</span>
           )}
         </div>
         <div className="recommended-repeat">
           <strong>Önerilen tekrar</strong>
-          <p>{resultAnalysis.shortFeedback}</p>
+          <p>{resultAnalysis.coachMessage}</p>
+          {resultAnalysis.nextActions.map((action, index) => (
+            <span key={action}>{index + 1}. {action}</span>
+          ))}
         </div>
       </section>
       <section className="next-card">
         <h3>Ne yapmak istersin?</h3>
-        <button onClick={() => onReviewWeak(weakTopics)}>
+        <button onClick={onRetryMistakes} disabled={!hasMistakes}>
+          Yanlışları Tekrar Et
+        </button>
+        <button onClick={() => onReviewWeak(weakTopics)} disabled={!hasMistakes}>
           Bu Konuları Tekrar Anlat
         </button>
         <button onClick={onMoreQuiz}>Daha Fazla Soru Çöz</button>
@@ -1506,6 +1545,54 @@ function QuizResult({
         <button onClick={onDashboard}>Ana Sayfaya Dön</button>
       </section>
     </div>
+  );
+}
+
+function TopicList({
+  title,
+  items,
+  emptyText,
+  tone,
+}: {
+  title: string;
+  items: string[];
+  emptyText: string;
+  tone: "good" | "weak";
+}) {
+  return (
+    <div className="topic-result-group">
+      <strong>{title}</strong>
+      {items.length > 0 ? (
+        items.map((item) => (
+          <p key={item} className={tone}>
+            {item}
+          </p>
+        ))
+      ) : (
+        <span>{emptyText}</span>
+      )}
+    </div>
+  );
+}
+
+function WrongAnswerCard({
+  mistake,
+  onReview,
+}: {
+  mistake: WrongAnswerAnalysis;
+  onReview: () => void;
+}) {
+  return (
+    <article className="wrong-answer-card">
+      <small>{mistake.topic} · PDF sayfa {mistake.sourcePage}</small>
+      <strong>{mistake.question}</strong>
+      <p>Senin cevabın: {mistake.userAnswer}</p>
+      <p>Doğru cevap: {mistake.correctAnswer}</p>
+      <p>{mistake.whyWrong}</p>
+      <p>{mistake.miniExplanation}</p>
+      <em>{mistake.reviewHint}</em>
+      <button onClick={onReview}>Bu konuyu tekrar anlat</button>
+    </article>
   );
 }
 

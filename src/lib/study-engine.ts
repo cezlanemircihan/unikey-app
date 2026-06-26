@@ -49,11 +49,28 @@ export type StructuredQuizQuestion = {
 
 export type QuizResultAnalysis = {
   score: number;
+  totalQuestions: number;
+  correctCount: number;
+  wrongCount: number;
   strongTopics: string[];
   weakTopics: string[];
+  mistakePatterns: string[];
   recommendedReviewMinutes: number;
   nextActions: string[];
+  coachMessage: string;
+  wrongAnswers: WrongAnswerAnalysis[];
   shortFeedback: string;
+};
+
+export type WrongAnswerAnalysis = {
+  question: string;
+  userAnswer: string;
+  correctAnswer: string;
+  topic: string;
+  whyWrong: string;
+  miniExplanation: string;
+  reviewHint: string;
+  sourcePage: number;
 };
 
 const stopWords = new Set([
@@ -546,49 +563,104 @@ export function buildQuiz(text: string, courseName: string): QuizQuestion[] {
 export function buildQuizResultAnalysis(
   quiz: QuizQuestion[],
   selectedAnswers: Record<number, string>,
+  fallbackTopics: string[] = [],
 ): QuizResultAnalysis {
-  const answered = quiz
+  const analyzed = quiz
     .map((question, index) => ({
       question,
       selected: selectedAnswers[index],
-    }))
-    .filter((item) => item.selected);
-  const correctItems = answered.filter(
+      index,
+      topic: resolveQuestionTopic(question, fallbackTopics, index),
+    }));
+  const correctItems = analyzed.filter(
     (item) => item.selected === item.question.answer,
   );
-  const wrongItems = answered.filter(
+  const wrongItems = analyzed.filter(
     (item) => item.selected !== item.question.answer,
   );
   const score = quiz.length > 0 ? Math.round((correctItems.length / quiz.length) * 100) : 0;
   const strongTopics = uniqueStrings(
-    correctItems.map((item) => item.question.topic ?? item.question.question),
+    correctItems.map((item) => item.topic),
   ).slice(0, 4);
   const weakTopics = uniqueStrings(
-    wrongItems.map((item) => item.question.topic ?? item.question.question),
+    wrongItems.map((item) => item.topic),
   ).slice(0, 4);
+  const wrongAnswers = wrongItems.map((item) =>
+    buildWrongAnswerAnalysis(
+      item.question,
+      item.selected ?? "",
+      item.topic,
+      item.index,
+      fallbackTopics,
+    ),
+  );
+  const answeredCount = analyzed.filter((item) => item.selected).length;
+  const mistakePatterns = buildMistakePatterns(wrongAnswers, quiz.length, answeredCount);
+  const recommendedReviewMinutes = calculateReviewMinutes(wrongAnswers.length, weakTopics.length);
+  const nextActions = buildNextActions(weakTopics, wrongAnswers.length);
+  const coachMessage =
+    wrongAnswers.length > 0
+      ? `${weakTopics.join(", ")} konuları kısa bir tekrar istiyor. Önce yanlış açıklamalarını oku, sonra mini quiz ile tekrar dene.`
+      : "Bu quizde belirgin zayıf konu görünmüyor. Aynı materyalden biraz daha zor sorular çözerek pekiştirebilirsin.";
 
   return {
     score,
+    totalQuestions: quiz.length,
+    correctCount: correctItems.length,
+    wrongCount: wrongAnswers.length,
     strongTopics,
     weakTopics,
-    recommendedReviewMinutes: Math.max(8, weakTopics.length * 6 + wrongItems.length * 2),
-    nextActions:
-      weakTopics.length > 0
-        ? [
-            "Yanlış yaptığın konuları kısa özetten tekrar oku.",
-            "PDF Asistanı'na bu konuları çocuk gibi anlatmasını iste.",
-            "Benzer 5 soru daha çöz.",
-          ]
-        : [
-            "Aynı PDF'ten daha zor sorular çöz.",
-            "Özetteki karıştırılan noktaları hızlıca tekrar et.",
-            "Yeni PDF ekleyerek konu kapsamını genişlet.",
-          ],
-    shortFeedback:
-      weakTopics.length > 0
-        ? `${weakTopics.join(", ")} başlıkları tekrar ister. Kısa tekrar sonrası skorun hızlı yükselebilir.`
-        : "Bu quizde belirgin zayıf konu görünmüyor. Şimdi daha zor sorularla pekiştirmek mantıklı.",
+    mistakePatterns,
+    recommendedReviewMinutes,
+    nextActions,
+    coachMessage,
+    wrongAnswers,
+    shortFeedback: coachMessage,
   };
+}
+
+export function buildWeakTopicMiniQuiz(
+  quiz: QuizQuestion[],
+  selectedAnswers: Record<number, string>,
+  fallbackTopics: string[] = [],
+): QuizQuestion[] {
+  const analysis = buildQuizResultAnalysis(quiz, selectedAnswers, fallbackTopics);
+  const weakTopicSet = new Set(analysis.weakTopics);
+  const weakQuestions = quiz.filter((question, index) =>
+    weakTopicSet.has(resolveQuestionTopic(question, fallbackTopics, index)),
+  );
+  const baseQuestions = weakQuestions.length > 0 ? weakQuestions : quiz.slice(0, 3);
+
+  return baseQuestions.slice(0, 5).map((question, index) => {
+    const topic = resolveQuestionTopic(question, fallbackTopics, index);
+    const sourcePage = resolveSourcePage(question);
+    const correctAnswer = question.answer || question.options[0] || "Doğru cevap";
+    const options = shuffleOptions([
+      correctAnswer,
+      ...question.options.filter((option) => option !== correctAnswer),
+      "Kavramın yalnızca adını ezberlemek yeterlidir",
+      "Bu konu sınav sorularında yorum gerektirmez",
+    ]).slice(0, 4);
+
+    return {
+      ...question,
+      question: `${topic} için tekrar sorusu: Bu kavramı en doğru açıklayan ifade hangisidir?`,
+      options: options.includes(correctAnswer)
+        ? options
+        : [correctAnswer, ...options].slice(0, 4),
+      answer: correctAnswer,
+      source:
+        question.explanation ??
+        question.source ??
+        `${topic} konusu kısa tekrar gerektiriyor. Kaynak: PDF sayfa ${sourcePage}`,
+      explanation:
+        question.explanation ??
+        `Bu soruda amaç ${topic} kavramının ne işe yaradığını tekrar netleştirmek. Kaynak: PDF sayfa ${sourcePage}`,
+      topic,
+      difficulty: question.difficulty ?? "medium",
+      sourcePage,
+    };
+  });
 }
 
 function buildFallbackTopic(keyword: string, pages: PageChunk[]): StudyTopic {
@@ -603,6 +675,114 @@ function buildFallbackTopic(keyword: string, pages: PageChunk[]): StudyTopic {
     examLikelihood: "medium",
     sourcePages,
   };
+}
+
+function buildWrongAnswerAnalysis(
+  question: QuizQuestion,
+  userAnswer: string,
+  topic: string,
+  index: number,
+  fallbackTopics: string[],
+): WrongAnswerAnalysis {
+  const safeTopic = topic || resolveQuestionTopic(question, fallbackTopics, index);
+  const sourcePage = resolveSourcePage(question);
+  const miniExplanation = sanitizeLearningText(
+    question.explanation || question.source || `${safeTopic} konusunun ana fikri tekrar edilmeli.`,
+  );
+
+  return {
+    question: question.question || "Soru metni bulunamadı.",
+    userAnswer: userAnswer || "Cevap verilmedi",
+    correctAnswer: question.answer || "Doğru cevap bilgisi eksik",
+    topic: safeTopic,
+    whyWrong:
+      "Seçilen cevap, sorunun ölçtüğü ana kavramı tam karşılamıyor. Bu konu tanım ve amaç ilişkisiyle birlikte tekrar edilmeli.",
+    miniExplanation,
+    reviewHint: `${safeTopic} için önce kısa tanımı oku, sonra "ne işe yarar?" ve "sınavda nasıl sorulur?" sorularına cevap ver.`,
+    sourcePage,
+  };
+}
+
+function buildMistakePatterns(
+  wrongAnswers: WrongAnswerAnalysis[],
+  totalQuestions: number,
+  answeredCount: number,
+) {
+  if (totalQuestions > 0 && answeredCount < totalQuestions) {
+    return ["Bazı sorular boş bırakılmış; önce tüm soruları cevaplama ritmi oturtulmalı."];
+  }
+
+  if (wrongAnswers.length === 0) {
+    return ["Belirgin hata örüntüsü yok; konu pekiştirme için daha zor sorular denenebilir."];
+  }
+
+  const patterns = [
+    "Tanım ile kavramın kullanım amacı karışmış olabilir.",
+  ];
+
+  if (wrongAnswers.length >= Math.max(2, Math.ceil(totalQuestions / 2))) {
+    patterns.push("Birden fazla temel başlık tekrar istiyor; kısa konu özetiyle başlamak iyi olur.");
+  }
+
+  if (wrongAnswers.some((answer) => answer.userAnswer.includes("aynı anlama gelir"))) {
+    patterns.push("Benzer kavramlar arasındaki farkları ayırma pratiği yapılmalı.");
+  }
+
+  return patterns.slice(0, 3);
+}
+
+function buildNextActions(weakTopics: string[], wrongCount: number) {
+  if (wrongCount === 0) {
+    return [
+      "Özetteki karıştırılan noktaları hızlıca gözden geçir.",
+      "Aynı PDF'ten daha zor 3 soru çöz.",
+      "Yeni doküman ekleyerek konu kapsamını genişlet.",
+    ];
+  }
+
+  const firstWeakTopic = weakTopics[0] ?? "zayıf görünen konu";
+
+  return [
+    `${firstWeakTopic} başlığını 3 dakika kısa özetten tekrar et.`,
+    "Yanlış açıklamalarını oku ve doğru cevabın neden doğru olduğunu kendine anlat.",
+    "Yanlışları tekrar et mini quizini çöz.",
+  ];
+}
+
+function calculateReviewMinutes(wrongCount: number, weakTopicCount: number) {
+  if (wrongCount === 0) return 6;
+  return Math.min(30, Math.max(8, wrongCount * 4 + weakTopicCount * 5));
+}
+
+function resolveQuestionTopic(
+  question: QuizQuestion,
+  fallbackTopics: string[],
+  index: number,
+) {
+  return (
+    sanitizeLearningText(question.topic) ||
+    fallbackTopics[index % Math.max(fallbackTopics.length, 1)] ||
+    "Genel tekrar konusu"
+  );
+}
+
+function resolveSourcePage(question: QuizQuestion) {
+  if (typeof question.sourcePage === "number" && Number.isFinite(question.sourcePage)) {
+    return question.sourcePage;
+  }
+
+  const pageMatch = `${question.source ?? ""} ${question.explanation ?? ""}`.match(
+    /PDF sayfa\s+(\d+)/i,
+  );
+
+  return pageMatch ? Number(pageMatch[1]) : 1;
+}
+
+function sanitizeLearningText(value?: string) {
+  return (value ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/\[Sayfa\s+\d+\]\s*/gi, "")
+    .trim();
 }
 
 function buildQuestionForTopic(

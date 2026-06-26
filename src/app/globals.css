@@ -1306,6 +1306,24 @@ button {
   color: #fca5a5;
 }
 
+.topic-result-group {
+  border-top: 1px solid rgba(196, 181, 253, 0.1);
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 0.75rem;
+}
+
+.topic-result-group strong,
+.mistake-patterns strong {
+  color: #f8fafc;
+  font-size: 0.86rem;
+}
+
+.topic-result-group span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
 .result-breakdown {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1347,6 +1365,62 @@ button {
   padding: 0.35rem 0.55rem;
 }
 
+.mistake-patterns {
+  border: 1px solid rgba(251, 191, 36, 0.18);
+  border-radius: 0.9rem;
+  background: rgba(251, 191, 36, 0.06);
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+  padding: 0.85rem;
+}
+
+.mistake-patterns span {
+  color: #fde68a;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.wrong-answer-card {
+  border-top: 1px solid rgba(248, 113, 113, 0.18);
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.8rem 0 0;
+}
+
+.wrong-answer-card + .wrong-answer-card {
+  margin-top: 0.8rem;
+}
+
+.wrong-answer-card small {
+  color: #fca5a5;
+  font-weight: 800;
+}
+
+.wrong-answer-card p,
+.wrong-answer-card em {
+  color: #fee2e2;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.wrong-answer-card em {
+  color: #fef3c7;
+  font-style: normal;
+}
+
+.wrong-answer-card button {
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  border-radius: 0.65rem;
+  background: rgba(248, 113, 113, 0.12);
+  color: #fee2e2;
+  cursor: pointer;
+  font-weight: 850;
+  justify-self: start;
+  padding: 0.55rem 0.7rem;
+}
+
 .recommended-repeat {
   border: 1px solid rgba(20, 184, 166, 0.22);
   border-radius: 0.9rem;
@@ -1367,6 +1441,14 @@ button {
   margin-top: 0.4rem;
 }
 
+.recommended-repeat span {
+  color: #ccfbf1;
+  display: block;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin-top: 0.35rem;
+}
+
 .next-card {
   display: grid;
   gap: 0.7rem;
@@ -1379,6 +1461,11 @@ button {
   color: #dbe4f0;
   padding: 0.9rem;
   text-align: left;
+}
+
+.next-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .review-page {
