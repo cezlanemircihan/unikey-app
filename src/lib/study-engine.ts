@@ -5,6 +5,11 @@ export type QuizQuestion = {
   source: string;
 };
 
+export type StudyTopic = {
+  title: string;
+  source: string;
+};
+
 const stopWords = new Set([
   "acaba",
   "ama",
@@ -185,6 +190,48 @@ export function extractSingleKeywords(text: string, limit = 10) {
     .map(([word]) => word);
 }
 
+export function buildTopics(text: string, limit = 8) {
+  const sentences = splitSentences(text);
+  const lowerText = text.toLocaleLowerCase("tr");
+  const curated: StudyTopic[] = [];
+
+  const addTopic = (needle: RegExp, title: string) => {
+    if (!needle.test(lowerText)) return;
+    const source =
+      sentences.find((sentence) => needle.test(sentence.toLocaleLowerCase("tr"))) ??
+      sentences[0] ??
+      title;
+    if (!curated.some((topic) => topic.title === title)) {
+      curated.push({ title, source: cleanPdfArtifact(source) });
+    }
+  };
+
+  addTopic(/file systems?|unix file|dosya sistemi|filesystem/i, "UNIX Dosya Sistemi Nedir?");
+  addTopic(/working directory|current directory|çalışma dizini/i, "Working Directory Mantığı");
+  addTopic(/everything.*file|regular file|directory|device file|her şey dosya/i, "UNIX'te Her Şey Dosyadır");
+  addTopic(/file types?|directory|symbolic link|regular file|dosya tür/i, "Dosya Türleri");
+  addTopic(/\bnfs\b|network file|ağ dosya/i, "NFS ve Ağ Dosya Sistemleri");
+  addTopic(/socket|sockaddr|tcp|port|byte order/i, "Socket Programlamaya Giriş");
+  addTopic(/tcp connection|connection|bağlantı/i, "TCP Bağlantısı");
+  addTopic(/port|adres|address/i, "Portlar ve Adresleme");
+  addTopic(/process|thread|scheduling|işlem|süreç/i, "İşlem ve Zamanlama Mantığı");
+  addTopic(/memory|paging|virtual memory|bellek/i, "Bellek Yönetimi");
+
+  const fallbackTopics = extractKeywords(text, limit * 2)
+    .map((keyword) => ({
+      title: topicTitleFromKeyword(keyword),
+      source: cleanPdfArtifact(findSentenceForKeyword(sentences, keyword)),
+    }))
+    .filter((topic) => topic.title.length > 4 && !isWeakTopicTitle(topic.title));
+
+  return [...curated, ...fallbackTopics]
+    .filter(
+      (topic, index, array) =>
+        array.findIndex((candidate) => candidate.title === topic.title) === index,
+    )
+    .slice(0, limit);
+}
+
 export function buildSummary(text: string, courseName: string) {
   const sentences = splitSentences(text);
 
@@ -192,47 +239,30 @@ export function buildSummary(text: string, courseName: string) {
     return "Bu PDF'ten özet çıkarabilecek kadar okunabilir metin alınamadı. PDF taranmış görsel olabilir; sonraki adımda OCR desteği eklenebilir.";
   }
 
+  const topics = buildTopics(text, 8);
+  const topicTitles = topics.map((topic) => topic.title);
   const keywords = extractKeywords(text, 14);
-  const importantSentences = rankSentences(sentences, keywords).slice(0, 10);
+  const importantSentences = rankSentences(sentences, [...topicTitles, ...keywords]).slice(0, 10);
   const overview = keepOriginalOrder(sentences, importantSentences.slice(0, 3));
-  const examPoints = keepOriginalOrder(sentences, importantSentences.slice(0, 6));
-  const concepts = keywords
-    .slice(0, 7)
-    .map((keyword) => ({
-      keyword,
-      sentence: findSentenceForKeyword(sentences, keyword),
-    }))
-    .filter(
-      (item, index, array) =>
-        array.findIndex((candidate) => candidate.sentence === item.sentence) ===
-        index,
-    )
-    .slice(0, 5);
-  const likelyQuestions = buildLikelyExamQuestions(keywords, concepts);
+  const likelyQuestions = buildLikelyExamQuestions(topicTitles);
 
   return [
     `${courseName} - Sınav Özeti`,
     "",
     "Bu PDF ne anlatıyor?",
-    ...overview.map((sentence) => `• ${polishSentence(sentence)}`),
+    ...overview.slice(0, 2).map((sentence) => `• ${polishSentence(cleanPdfArtifact(sentence))}`),
     "",
-    "Mutlaka bilmen gereken 3 şey",
-    ...examPoints.slice(0, 3).map((sentence, index) => `${index + 1}. ${polishSentence(sentence)}`),
+    "Mutlaka bil",
+    ...topics.slice(0, 3).map((topic, index) => `${index + 1}. ${topic.title}: ${shortExplain(topic.source)}`),
     "",
-    "Kritik kavramlar",
-    ...concepts.map(
-      ({ keyword, sentence }) =>
-        `• ${titleCase(humanizeTerm(keyword))}: ${polishSentence(sentence)}`,
-    ),
+    "Sınavda çıkabilecek sorular",
+    ...likelyQuestions.slice(0, 3).map((question) => `• ${question}`),
     "",
-    "Sınavda nasıl gelir?",
-    ...likelyQuestions.map((question) => `• ${question}`),
+    "Hoca nereden sorabilir?",
+    ...topics.slice(0, 2).map((topic) => `• ${topic.title} konusunun tanımı, amacı ve örnek kullanımını sorabilir.`),
     "",
-    "Ezber kartları",
-    `Bu PDF'te özellikle ${keywords
-      .slice(0, 5)
-      .map((keyword) => titleCase(humanizeTerm(keyword)))
-      .join(", ")} kavramlarına odaklanmalısın. Sınav çalışırken sadece tanımı ezberleme; kavramın ne işe yaradığını, hangi adımlarla uygulandığını ve örnek üzerinden nasıl yorumlandığını kontrol et.`,
+    "Karıştırılan noktalar",
+    ...topics.slice(2, 4).map((topic) => `• ${topic.title} ile ilişkili benzer kavramların farkını netleştir.`),
   ].join("\n");
 }
 
@@ -270,7 +300,7 @@ export function answerFromText(text: string, question: string) {
 
 export function buildQuiz(text: string, courseName: string): QuizQuestion[] {
   const sentences = splitSentences(text);
-  const keywords = extractKeywords(text, 8);
+  const topics = buildTopics(text, 6);
 
   if (sentences.length === 0) {
     return [
@@ -288,48 +318,54 @@ export function buildQuiz(text: string, courseName: string): QuizQuestion[] {
     ];
   }
 
-  const firstKeyword = keywords[0] ?? courseName;
-  const secondKeyword = keywords[1] ?? "temel kavram";
-  const thirdKeyword = keywords[2] ?? "uygulama";
-  const sourceSentence = findSentenceForKeyword(sentences, firstKeyword);
-  const secondSentence = findSentenceForKeyword(sentences, secondKeyword);
+  const firstTopic = topics[0] ?? {
+    title: courseName,
+    source: sentences[0],
+  };
+  const secondTopic = topics[1] ?? {
+    title: "Temel kavramlar",
+    source: sentences[1] ?? sentences[0],
+  };
+  const thirdTopic = topics[2] ?? {
+    title: "Uygulama mantığı",
+    source: sentences[2] ?? sentences[0],
+  };
+  const firstAnswer = answerFromTopic(firstTopic);
+  const secondAnswer = answerFromTopic(secondTopic);
 
   return [
     {
-      question: `${titleCase(humanizeTerm(firstKeyword))} konusu bu derste neden önemlidir?`,
+      question: `${firstTopic.title} konusu bu derste neden önemlidir?`,
       options: shuffleOptions([
-        trimOption(sourceSentence),
-        "Kullanıcının hesap şifresini açıklamak",
-        "PDF dışındaki rastgele konuları anlatmak",
-        "PDF dosyasının yalnızca adını saklamak",
+        firstAnswer,
+        "Sadece dosya adını düzenlemek için kullanılır.",
+        "Kayıt ekranındaki kullanıcı bilgilerini saklamak için vardır.",
+        "PDF dışındaki rastgele konuları tahmin etmek için kullanılır.",
       ]),
-      answer: trimOption(sourceSentence),
-      source: `Doğru cevap PDF'teki ana açıklamaya dayanıyor. Kaynak: ${sourceSentence}`,
+      answer: firstAnswer,
+      source: `Doğru cevap "${firstTopic.title}" konusunun ana fikrine dayanıyor. Çünkü PDF bu kavramı dersin temel yapı taşlarından biri olarak ele alıyor. Kaynak: PDF'teki ilgili bölüm`,
     },
     {
-      question: `${titleCase(humanizeTerm(firstKeyword))} ile ilgili doğru ifade hangisidir?`,
+      question: `${secondTopic.title} ile ilgili doğru ifade hangisidir?`,
       options: shuffleOptions([
-        trimOption(sourceSentence),
-        trimOption(secondSentence),
-        `${courseName} dersinden bağımsız bir kayıt bilgisi olarak`,
-        "Sadece uygulama ayarı olarak",
+        secondAnswer,
+        "Bu konu yalnızca ders kodunu belirlemek için kullanılır.",
+        "Bu kavramın sınavla ilişkisi yoktur.",
+        "Sadece PDF yükleme ekranının bir ayarıdır.",
       ]),
-      answer: trimOption(sourceSentence),
-      source: `Doğru cevap bu kavramın PDF'teki kullanımını açıklar. Kaynak: ${sourceSentence}`,
+      answer: secondAnswer,
+      source: `Doğru cevap "${secondTopic.title}" başlığının PDF'teki açıklamasına dayanıyor. Kaynak: PDF'teki ilgili ifade`,
     },
     {
-      question: "Sınav öncesi tekrar yaparken hangi kavramı özellikle bilmelisin?",
+      question: "Sınav öncesi tekrar yaparken hangi başlığı özellikle bilmelisin?",
       options: shuffleOptions([
-        titleCase(humanizeTerm(firstKeyword)),
-        titleCase(humanizeTerm(secondKeyword)),
-        titleCase(humanizeTerm(thirdKeyword)),
+        firstTopic.title,
+        secondTopic.title,
+        thirdTopic.title,
         "e-posta doğrulama kodu",
       ]),
-      answer: titleCase(humanizeTerm(firstKeyword)),
-      source: `Doğru cevap PDF'te en sık ve merkezi görünen kavramlardan biridir. Kaynak: ${keywords
-        .slice(0, 4)
-        .map((keyword) => titleCase(humanizeTerm(keyword)))
-        .join(", ")}`,
+      answer: firstTopic.title,
+      source: `Doğru cevap PDF'in ana konularından biridir. Çünkü bu başlık, dokümanın sınavda sorulabilecek temel fikrini taşır.`,
     },
   ];
 }
@@ -394,24 +430,53 @@ function uniqueSentence(sentence: string, index: number, sentences: string[]) {
   );
 }
 
-function buildLikelyExamQuestions(
-  keywords: string[],
-  concepts: Array<{ keyword: string; sentence: string }>,
-) {
-  const questions = concepts.slice(0, 4).map(({ keyword }) => {
-    const concept = titleCase(humanizeTerm(keyword));
-    return `${concept} nedir, hangi amaçla kullanılır ve PDF'teki örnek/bağlamla nasıl açıklanır?`;
+function buildLikelyExamQuestions(topics: string[]) {
+  const questions = topics.slice(0, 4).map((topic) => {
+    return `${topic} nedir, hangi amaçla kullanılır ve bir örnek üzerinden nasıl açıklanır?`;
   });
 
-  if (keywords.length >= 2) {
-    questions.push(
-      `${titleCase(humanizeTerm(keywords[0]))} ile ${titleCase(
-        humanizeTerm(keywords[1]),
-      )} arasındaki ilişki veya fark nasıl yorumlanır?`,
-    );
+  if (topics.length >= 2) {
+    questions.push(`${topics[0]} ile ${topics[1]} arasındaki ilişki veya fark nasıl yorumlanır?`);
   }
 
   return questions.slice(0, 5);
+}
+
+function topicTitleFromKeyword(keyword: string) {
+  const readable = titleCase(humanizeTerm(keyword));
+  if (/sistem|system/i.test(readable)) return `${readable} Nedir?`;
+  if (/directory|dizin/i.test(readable)) return `${readable} Mantığı`;
+  if (/connection|bağlantı/i.test(readable)) return `${readable} Nasıl Çalışır?`;
+  if (/port|adres|address/i.test(readable)) return `${readable} ve Kullanımı`;
+  return `${readable} Konusu`;
+}
+
+function isWeakTopicTitle(title: string) {
+  return /^(Other|Command|File|Unix|Chapter|Notes?|PDF|Sayfa|The|And|For)\b/i.test(title);
+}
+
+function cleanPdfArtifact(value: string) {
+  return value
+    .replace(/\[Sayfa\s+\d+\]\s*/gi, "")
+    .replace(/\bchapter\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|\d+)\b/gi, "")
+    .replace(/\bfifteen\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function shortExplain(sentence: string) {
+  const clean = cleanPdfArtifact(sentence);
+  if (!clean) return "Bu konu PDF'in ana sınav başlıklarından biri olarak görünüyor.";
+  return trimOption(polishSentence(clean), 180);
+}
+
+function answerFromTopic(topic: StudyTopic) {
+  const explanation = shortExplain(topic.source);
+  if (explanation.length < 40) {
+    return `${topic.title} dersin ana fikrini anlamak için kullanılan temel başlıklardan biridir.`;
+  }
+
+  return explanation;
 }
 
 function humanizeTerm(term: string) {
@@ -459,8 +524,8 @@ function titleCase(value: string) {
     .join(" ");
 }
 
-function trimOption(text: string) {
-  return text.length > 150 ? `${text.slice(0, 147).trim()}...` : text;
+function trimOption(text: string, limit = 150) {
+  return text.length > limit ? `${text.slice(0, limit - 3).trim()}...` : text;
 }
 
 function shuffleOptions(options: string[]) {

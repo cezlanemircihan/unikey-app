@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import {
   buildQuiz,
   buildSummary,
+  buildTopics,
   cleanText,
-  extractKeywords,
 } from "@/lib/study-engine";
 import { generateAiStudyPack } from "@/lib/ai-study";
 
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
     const localPack = {
       summary: buildSummary(text, courseName),
-      keywords: extractKeywords(text, 10),
+      keywords: buildTopics(text, 10).map((topic) => topic.title),
       quiz: buildQuiz(text, courseName),
     };
     const aiPack = await generateAiStudyPack({

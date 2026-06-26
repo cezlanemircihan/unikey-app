@@ -1279,9 +1279,13 @@ function StudyChat({
           <div>
             {[
               "Bunu çocuk gibi anlat",
+              "Bu konu neden önemli?",
+              "Hoca bunu nasıl sorar?",
+              "1 dakikada özetle",
+              "Ön koşul konuları göster",
+              "Benzer konu öner",
               "Sınavda nasıl gelir?",
               "Örnek soru çöz",
-              "Ezber tekniği ver",
             ].map((prompt) => (
               <button key={prompt} onClick={() => setQuestion(prompt)}>
                 {prompt}
@@ -1446,7 +1450,13 @@ function QuizResult({
         <p>{correctCount} doğru, {Math.max(total - correctCount, 0)} yanlış</p>
       </section>
       <section className="analysis-card">
-        <h3>Performans Analizi</h3>
+        <h3>Bugünkü Performans</h3>
+        <div className="result-breakdown">
+          <span>Doğru: {correctCount}</span>
+          <span>Yanlış: {Math.max(total - correctCount, 0)}</span>
+          <span>Tahmini tekrar: 8 dakika</span>
+          <span>Başarı tahmini: %{Math.min(95, score + 29)}</span>
+        </div>
         {topics.slice(0, 4).map((topic, index) => (
           <p key={topic} className={index < 3 ? "good" : "weak"}>
             {topic}
@@ -1587,10 +1597,10 @@ function parseSummaryCards(summary: string) {
   const normalized = summary.replace(/\r/g, "").trim();
   const defaultTitles = [
     "Bu PDF ne anlatıyor?",
-    "Mutlaka bilmen gereken 3 şey",
-    "Kritik kavramlar",
-    "Sınavda nasıl gelir?",
-    "Ezber kartları",
+    "Mutlaka bil",
+    "Sınavda çıkabilecek sorular",
+    "Hoca nereden sorabilir?",
+    "Karıştırılan noktalar",
   ];
   const headingPattern = new RegExp(
     `(?:^|\\n)\\s*(?:\\d+\\.\\s*)?(${defaultTitles

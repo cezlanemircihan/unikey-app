@@ -1306,6 +1306,23 @@ button {
   color: #fca5a5;
 }
 
+.result-breakdown {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+}
+
+.result-breakdown span {
+  border: 1px solid rgba(196, 181, 253, 0.12);
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.045);
+  color: #dbe4f0;
+  font-size: 0.78rem;
+  font-weight: 850;
+  padding: 0.6rem;
+}
+
 .wrong-topic-card {
   border: 1px solid rgba(248, 113, 113, 0.2);
   border-radius: 0.9rem;
