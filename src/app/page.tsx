@@ -1642,27 +1642,21 @@ function CourseReadyStep({
           description="PDF metni okunmuş olabilir ama öğretilebilir konu başlıkları çıkarılamadı. Farklı bir PDF ile tekrar deneyebilirsin."
         />
       )}
-      <h3>Ne yapmak istersin?</h3>
+      <h3>{isLessonComplete ? "Ne yapmak istersin?" : "Ders dışı işlemler"}</h3>
       <div className="ready-actions">
         <button className="green-button" onClick={onStudy}>
           Anlamadığım Noktaları Sor
         </button>
-        <button
-          className="primary-button"
-          onClick={() => onQuiz("all")}
-          disabled={!isLessonComplete}
-        >
-          {isLessonComplete ? "Final Quizi Başlat" : "Quiz için modülleri tamamla"}
-        </button>
+        {isLessonComplete && (
+          <button className="primary-button" onClick={() => onQuiz("all")}>
+            Final Quizi Başlat
+          </button>
+        )}
         <button className="blue-button" onClick={onAddDocument}>
           Hayır, Daha Fazla Doküman Ekle
         </button>
-        {documentsCount > 1 && (
-          <button
-            className="secondary-button"
-            onClick={() => onQuiz("latest")}
-            disabled={!isLessonComplete}
-          >
+        {documentsCount > 1 && isLessonComplete && (
+          <button className="secondary-button" onClick={() => onQuiz("latest")}>
             Sadece Bu PDF İçin Quiz Üret
           </button>
         )}
@@ -1756,16 +1750,7 @@ function LessonEnginePanel({
               <p>{assistModeText(moduleAssistMode, activeModule)}</p>
             </div>
           )}
-          <div className="lesson-block-list">
-            {activeModule.blocks.map((block, index) => (
-              <section key={`${block.type}-${index}`} className={`lesson-block ${block.type}`}>
-                <small>{lessonBlockLabel(block.type)}</small>
-                <h4>{block.title}</h4>
-                <p>{block.content}</p>
-                {block.question && <em>{block.question}</em>}
-              </section>
-            ))}
-          </div>
+          <LessonNarrativeCard module={activeModule} />
           <div className="lesson-checkpoint-actions">
             <button onClick={() => onModuleAssist("repeat")}>Tekrar anlat</button>
             <button onClick={() => onModuleAssist("simple")}>Daha basit anlat</button>
@@ -1782,6 +1767,70 @@ function LessonEnginePanel({
         />
       )}
     </article>
+  );
+}
+
+function LessonNarrativeCard({ module }: { module: LessonModule }) {
+  const blockMap = mapLessonBlocks(module);
+  const checkpointQuestion =
+    blockMap.checkpoint?.question ||
+    "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?";
+
+  return (
+    <section className="lesson-narrative-card">
+      <h3>{module.title}</h3>
+      <LessonNarrativeSection
+        title="Bu modülde ne öğreneceğiz?"
+        content={module.learningGoals.join(" ")}
+      />
+      <LessonNarrativeSection
+        title="Ana anlatım"
+        content={blockMap.core_explanation?.content}
+      />
+      <LessonNarrativeSection
+        title="Günlük hayat analojisi"
+        content={blockMap.analogy?.content}
+      />
+      <LessonNarrativeSection title="Örnek" content={blockMap.example?.content} />
+      <LessonNarrativeSection
+        title="Neden önemli?"
+        content={blockMap.formula?.content}
+      />
+      <LessonNarrativeSection
+        title="Mini özet"
+        content={blockMap.mini_summary?.content}
+      />
+      <div className="lesson-single-checkpoint">
+        <strong>{checkpointQuestion}</strong>
+      </div>
+    </section>
+  );
+}
+
+function LessonNarrativeSection({
+  title,
+  content,
+}: {
+  title: string;
+  content?: string;
+}) {
+  if (!content?.trim()) return null;
+
+  return (
+    <div>
+      <h4>{title}</h4>
+      <p>{stripRepeatedSectionLabel(content, title)}</p>
+    </div>
+  );
+}
+
+function mapLessonBlocks(module: LessonModule) {
+  return module.blocks.reduce<Partial<Record<LessonBlockType, LessonModule["blocks"][number]>>>(
+    (blocks, block) => {
+      if (!blocks[block.type]) blocks[block.type] = block;
+      return blocks;
+    },
+    {},
   );
 }
 
@@ -2251,18 +2300,16 @@ function lessonDifficultyLabel(difficulty: AiLesson["difficulty"]) {
   return labels[difficulty];
 }
 
-function lessonBlockLabel(type: LessonBlockType) {
-  const labels: Record<LessonBlockType, string> = {
-    intro: "Bu modülde",
-    analogy: "Analoji",
-    core_explanation: "Ana anlatım",
-    example: "Örnek",
-    formula: "Neden böyle?",
-    mini_summary: "Mini özet",
-    checkpoint: "Kontrol noktası",
-  };
+function stripRepeatedSectionLabel(content: string, title: string) {
+  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const genericLabels =
+    "Ana anlatım|Günlük hayat analojisi|Gerçek hayat analojisi|Örnek|Neden önemli|Mini özet|Kontrol noktası|Bu modülde öğreneceğiz";
+  const repeatedLabelPattern = new RegExp(
+    `^\\s*(?:${escapedTitle}|${genericLabels})\\s*[:：-]\\s*`,
+    "i",
+  );
 
-  return labels[type];
+  return content.replace(repeatedLabelPattern, "").trim();
 }
 
 function assistModeTitle(mode: "repeat" | "simple" | "example") {

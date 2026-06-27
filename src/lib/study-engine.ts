@@ -475,7 +475,7 @@ export function buildTopics(text: string, limit = 8): StudyTopic[] {
 
   return [
     {
-      title: "PDF'in Ana Konusu",
+      title: "PDF'in Ana Mantığı",
       shortDescription:
         "Bu dokümanda geçen temel kavramları sınav öncesi anlaşılır başlıklara ayırır.",
       whyImportant:
@@ -904,7 +904,7 @@ export function calculateOutputQuality({
 }
 
 function buildFallbackTopic(keyword: string, pages: PageChunk[]): StudyTopic {
-  const title = topicTitleFromKeyword(keyword);
+  const title = cleanTeachingTitle(topicTitleFromKeyword(keyword));
   const sourcePages = findPagesForKeyword(pages, keyword);
 
   return {
@@ -1061,15 +1061,16 @@ function buildLessonModule(
   index: number,
 ): LessonModule {
   const sourcePages = topic.sourcePages.length > 0 ? topic.sourcePages : [1];
-  const coreExplanation = explainTopic(topic.title, topic.shortDescription);
+  const title = cleanTeachingTitle(topic.title);
+  const coreExplanation = explainTopic(title, topic.shortDescription);
   const estimatedMinutes = topic.examLikelihood === "high" ? 10 : 8;
 
   return {
-    id: slugifyLessonId(topic.title, index),
-    title: topic.title,
+    id: slugifyLessonId(title, index),
+    title,
     estimatedMinutes,
     learningGoals: [
-      `${topic.title} konusunun ne anlattığını açıklayabilmek`,
+      `${title} başlığının ne anlattığını açıklayabilmek`,
       "Bu konunun sınavda hangi soru tipine dönebileceğini görmek",
       "Tanım ezberi yerine neden-sonuç ilişkisini kurmak",
     ],
@@ -1083,7 +1084,7 @@ function buildLessonModule(
       {
         type: "intro",
         title: "Bu modülde öğreneceğiz",
-        content: `${courseName} içinde bu modül, ${topic.title} başlığını parçalara ayırır. Hedefimiz kavramı ezberlemek değil; hangi problemi çözdüğünü ve sınavda nasıl kullanılacağını görmek.`,
+        content: `${courseName} içinde bu modülün amacı ${title} başlığını sınavda anlatabilecek kadar netleştirmek. Önce kavramın hangi problemi çözdüğünü kuracağız, sonra PDF'teki bağlamı günlük bir örnekle ilişkilendireceğiz. Böylece elinde ezber cümlesi değil, hocanın soru sorduğunda kullanabileceğin bir düşünme yolu olacak.`,
         question: null,
         options: null,
         correctAnswer: null,
@@ -1092,7 +1093,7 @@ function buildLessonModule(
       {
         type: "analogy",
         title: "Gerçek hayat analojisi",
-        content: buildAnalogy(topic.title),
+        content: buildAnalogy(title),
         question: null,
         options: null,
         correctAnswer: null,
@@ -1101,7 +1102,7 @@ function buildLessonModule(
       {
         type: "core_explanation",
         title: "Ana anlatım",
-        content: `${coreExplanation} ${topic.shortDescription} Bu başlık önemli çünkü ${topic.whyImportant.toLocaleLowerCase("tr")} Sınavda genellikle tanım, amaç ve kısa örnek üzerinden ölçülür.`,
+        content: `${coreExplanation} ${topic.shortDescription} Bu başlığı çalışırken ilk soru şu olmalı: "Bu kavram hangi karışıklığı veya hangi ihtiyacı çözüyor?" Cevap genellikle tanımın kendisinden daha önemlidir. ${topic.whyImportant} Bu yüzden sınavda sadece kavram adını yazmak yetmez; kavramın ne işe yaradığını, hangi durumda kullanıldığını ve küçük bir örneğini birlikte kurman gerekir.`,
         question: null,
         options: null,
         correctAnswer: null,
@@ -1110,7 +1111,7 @@ function buildLessonModule(
       {
         type: "example",
         title: "Örnek",
-        content: buildLessonExample(topic.title),
+        content: buildLessonExample(title),
         question: null,
         options: null,
         correctAnswer: null,
@@ -1119,7 +1120,7 @@ function buildLessonModule(
       {
         type: "formula",
         title: "Kural varsa: neden böyle?",
-        content: buildRuleExplanation(topic.title),
+        content: buildRuleExplanation(title),
         question: null,
         options: null,
         correctAnswer: null,
@@ -1128,7 +1129,7 @@ function buildLessonModule(
       {
         type: "mini_summary",
         title: "Mini özet",
-        content: `${topic.title} için akılda kalacak cümle: ${coreExplanation} Kaynak: PDF sayfa ${sourcePages.join(", ")}.`,
+        content: `Akılda kalacak kısa cümle şu: ${coreExplanation} Sınavda cevap verirken önce bu ana fikri söyle, sonra bir örnekle destekle. Kaynak: PDF sayfa ${sourcePages.join(", ")}.`,
         question: null,
         options: null,
         correctAnswer: null,
@@ -1467,11 +1468,12 @@ function buildCommonConfusions(topics: StudyTopic[]) {
 
 function topicTitleFromKeyword(keyword: string) {
   const readable = titleCase(humanizeTerm(keyword));
+  if (isWeakTopicTitle(readable)) return "PDF'in Ana Mantığı";
   if (/sistem|system/i.test(readable)) return `${readable} Temelleri`;
   if (/directory|dizin/i.test(readable)) return `${readable} Mantığı`;
   if (/connection|bağlantı/i.test(readable)) return `${readable} Nasıl Çalışır?`;
   if (/port|adres|address/i.test(readable)) return `${readable} ve Kullanımı`;
-  return `${readable} Konusu`;
+  return `${readable} Temelleri`;
 }
 
 function isMeaningfulTerm(word: string) {
@@ -1487,10 +1489,31 @@ function isLikelyBadPhrase(current: string, next: string) {
 }
 
 function isWeakTopicTitle(title: string) {
+  const normalized = title.toLocaleLowerCase("tr").trim();
+  if (normalized === "pdf'in ana mantığı") return false;
+
   return (
     /^(Other|Command|File|Chapter|Notes?|PDF|Sayfa|The|And|For)\b/i.test(title) ||
-    /^Unix$/i.test(title)
+    /^Unix$/i.test(title) ||
+    /\b(each line|konusu|other|command)\b/i.test(normalized) ||
+    normalized.split(/\s+/).length < 2
   );
+}
+
+function cleanTeachingTitle(title: string) {
+  const cleaned = title
+    .replace(/\bKonusu\b/gi, "Temelleri")
+    .replace(/\bEach Line\b/gi, "")
+    .replace(/\bOther\b/gi, "")
+    .replace(/\bCommand\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned || isWeakTopicTitle(cleaned)) {
+    return "PDF'in Ana Mantığı";
+  }
+
+  return cleaned;
 }
 
 function cleanPdfArtifact(value: string) {

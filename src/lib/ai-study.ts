@@ -120,7 +120,7 @@ JSON şeması tam olarak şu yapıda olsun:
           {
             "type": "intro | analogy | core_explanation | example | formula | mini_summary | checkpoint",
             "title": "Blok başlığı",
-            "content": "Kısa, öğretici Türkçe içerik",
+            "content": "Akıcı, öğretici, ofis saati tarzı Türkçe içerik",
             "question": null,
             "options": null,
             "correctAnswer": null,
@@ -178,7 +178,7 @@ JSON şeması tam olarak şu yapıda olsun:
 Zorunlu kurallar:
 - Bütün anlatım Türkçe olacak. PDF İngilizce olsa bile Türkçe anlat.
 - Teknik terimler gerektiğinde korunabilir: socket, TCP, working directory, NFS gibi. Ama cümle Türkçe olmalı.
-- "File Systems", "Unix File", "Other", "Command", "Chapter Fifteen" gibi ham anahtar kelime başlıkları üretme.
+- "File Systems", "Unix File", "Other", "Command", "Chapter Fifteen", "Konusu", "Each Line" gibi ham veya yapay başlıklar üretme.
 - Anahtar kelime çıkarma; konu çıkar. Örnek: "UNIX Dosya Sistemi Temelleri", "Working Directory ve Path Mantığı", "UNIX'te Everything is a File Yaklaşımı".
 - PDF'ten ham satır, kod bloğu, shell script, "[Sayfa 1] Chapter..." gibi metinleri cevap olarak kopyalama.
 - Summary tek uzun paragraf olmasın; alanları doldur.
@@ -193,10 +193,14 @@ Zorunlu kurallar:
 - sourcePages ve sourcePage sadece sayı olsun. Sayfa bilinmiyorsa 1 yaz.
 - PDF'te olmayan bilgiyi uydurma.
 - Ana deneyim summary değil lesson olacak; lesson alanını mutlaka doldur.
-- Her module blok blok öğretmeli: intro, analogy, core_explanation, example, mini_summary ve checkpoint olmalı.
-- Checkpoint sorusu şu hissi vermeli: "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?"
+- JSON'da blocks alanı kalsın ama kullanıcıya tek akıcı ders gibi okunacak içerik üret.
+- Her module için intro, analogy, core_explanation, example, formula, mini_summary ve checkpoint olmalı.
+- intro kısa müfredat hissi versin; core_explanation ofis saati gibi akıcı ana anlatım olsun.
+- Blok content alanlarında "Ana anlatım:", "Mini özet:", "Kontrol noktası:" gibi kendi başlığını tekrar etme.
+- Checkpoint yalnızca bir soru taşısın: "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?"
 - İlk module status "active", diğerleri "locked" olsun.
-- Her modül 500-800 kelimeyi geçmesin; uzun ders dökümü yazma.
+- Her modül toplamda yaklaşık 500-900 kelime arası olsun; tek tek çok kısa parçalar yazma.
+- Metin ders anlatımı gibi aksın: önce ne öğreneceğiz, sonra ana fikir, sonra analoji, örnek, önem ve mini özet.
 - Quiz sorularında mümkünse moduleId alanını ilgili modül id'siyle eşleştir.
 `;
 
@@ -369,7 +373,7 @@ function normalizeTopics(topics: RawTopic[] | undefined): StudyTopic[] {
 
   return topics
     .map((topic) => ({
-      title: sanitizeText(topic.title),
+      title: cleanTeachingTitle(sanitizeText(topic.title)),
       shortDescription: sanitizeText(topic.shortDescription),
       whyImportant: sanitizeText(topic.whyImportant),
       examLikelihood: normalizeExamLikelihood(topic.examLikelihood),
@@ -507,7 +511,7 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
 
       return {
         id: sanitizeText(module?.id) || `modul-${index + 1}`,
-        title: sanitizeText(module?.title),
+        title: cleanTeachingTitle(sanitizeText(module?.title)),
         estimatedMinutes: normalizePositiveNumber(module?.estimatedMinutes, 8),
         learningGoals: normalizeStringArray(module?.learningGoals, 4),
         prerequisites: normalizeStringArray(module?.prerequisites, 3),
@@ -519,6 +523,7 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
     .filter(
       (module) =>
         module.title.length > 5 &&
+        !isWeakTeachingTitle(module.title) &&
         module.learningGoals.length > 0 &&
         module.blocks.some((block) => block.type === "core_explanation") &&
         module.blocks.some((block) => block.type === "checkpoint"),
@@ -663,6 +668,33 @@ function sanitizeText(value: unknown) {
   return typeof value === "string"
     ? value.replace(/\s+/g, " ").replace(/\[Sayfa\s+\d+\]\s*/gi, "").trim()
     : "";
+}
+
+function cleanTeachingTitle(title: string) {
+  const cleaned = title
+    .replace(/\bKonusu\b/gi, "Temelleri")
+    .replace(/\bEach Line\b/gi, "")
+    .replace(/\bOther\b/gi, "")
+    .replace(/\bCommand\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned || isWeakTeachingTitle(cleaned)) {
+    return "PDF'in Ana Mantığı";
+  }
+
+  return cleaned;
+}
+
+function isWeakTeachingTitle(title: string) {
+  const normalized = title.toLocaleLowerCase("tr").trim();
+  if (normalized === "pdf'in ana mantığı") return false;
+
+  return (
+    normalized.split(/\s+/).length < 2 ||
+    /^(other|command|file|chapter|notes?|sayfa|the|and|for)\b/i.test(normalized) ||
+    /\b(each line|konusu|other|command)\b/i.test(normalized)
+  );
 }
 
 function looksLikeRawPdfDump(value: string) {
