@@ -1739,11 +1739,6 @@ function LessonEnginePanel({
             </div>
             <span>{activeModule.estimatedMinutes} dk</span>
           </div>
-          <div className="lesson-goals">
-            {activeModule.learningGoals.slice(0, 3).map((goal) => (
-              <span key={goal}>{goal}</span>
-            ))}
-          </div>
           {moduleAssistMode && (
             <div className="lesson-assist-note">
               <strong>{assistModeTitle(moduleAssistMode)}</strong>
@@ -1772,6 +1767,7 @@ function LessonEnginePanel({
 
 function LessonNarrativeCard({ module }: { module: LessonModule }) {
   const blockMap = mapLessonBlocks(module);
+  const narrative = module.lessonText?.trim() || buildLessonNarrativeFromBlocks(module);
   const checkpointQuestion =
     blockMap.checkpoint?.question ||
     "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?";
@@ -1779,48 +1775,11 @@ function LessonNarrativeCard({ module }: { module: LessonModule }) {
   return (
     <section className="lesson-narrative-card">
       <h3>{module.title}</h3>
-      <LessonNarrativeSection
-        title="Bu modülde ne öğreneceğiz?"
-        content={module.learningGoals.join(" ")}
-      />
-      <LessonNarrativeSection
-        title="Ana anlatım"
-        content={blockMap.core_explanation?.content}
-      />
-      <LessonNarrativeSection
-        title="Günlük hayat analojisi"
-        content={blockMap.analogy?.content}
-      />
-      <LessonNarrativeSection title="Örnek" content={blockMap.example?.content} />
-      <LessonNarrativeSection
-        title="Neden önemli?"
-        content={blockMap.formula?.content}
-      />
-      <LessonNarrativeSection
-        title="Mini özet"
-        content={blockMap.mini_summary?.content}
-      />
+      <p className="lesson-text">{stripRepeatedSectionLabel(narrative, module.title)}</p>
       <div className="lesson-single-checkpoint">
         <strong>{checkpointQuestion}</strong>
       </div>
     </section>
-  );
-}
-
-function LessonNarrativeSection({
-  title,
-  content,
-}: {
-  title: string;
-  content?: string;
-}) {
-  if (!content?.trim()) return null;
-
-  return (
-    <div>
-      <h4>{title}</h4>
-      <p>{stripRepeatedSectionLabel(content, title)}</p>
-    </div>
   );
 }
 
@@ -1832,6 +1791,22 @@ function mapLessonBlocks(module: LessonModule) {
     },
     {},
   );
+}
+
+function buildLessonNarrativeFromBlocks(module: LessonModule) {
+  const blockMap = mapLessonBlocks(module);
+
+  return [
+    ["Bu modülde ne öğreneceğiz?", blockMap.intro?.content || module.learningGoals.join(" ")],
+    ["Ana anlatım", blockMap.core_explanation?.content],
+    ["Günlük hayat analojisi", blockMap.analogy?.content],
+    ["Örnek", blockMap.example?.content],
+    ["Neden önemli?", blockMap.formula?.content],
+    ["Mini özet", blockMap.mini_summary?.content],
+  ]
+    .filter(([, content]) => content?.trim())
+    .map(([title, content]) => `${title}\n${stripRepeatedSectionLabel(content ?? "", title ?? "")}`)
+    .join("\n\n");
 }
 
 function StudyChat({

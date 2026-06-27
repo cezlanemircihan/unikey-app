@@ -80,6 +80,7 @@ export type LessonModule = {
   prerequisites: string[];
   sourcePages: number[];
   status: LessonModuleStatus;
+  lessonText: string;
   blocks: LessonBlock[];
 };
 
@@ -134,6 +135,12 @@ export type OutputQualityReport = {
     weakTopicsReady: boolean;
     lessonModulesReady: boolean;
     lessonBlocksComplete: boolean;
+    lessonTextDeepEnough: boolean;
+    lessonAnalogyPresent: boolean;
+    lessonExamplePresent: boolean;
+    lessonExamAnglePresent: boolean;
+    lessonNoRepeatedSentences: boolean;
+    lessonTitlesClean: boolean;
     lessonCheckpointsReady: boolean;
     lessonSourcePagesComplete: boolean;
     quizModuleLinksComplete: boolean;
@@ -471,7 +478,14 @@ export function buildTopics(text: string, limit = 8): StudyTopic[] {
       array.findIndex((candidate) => candidate.title === topic.title) === index,
   );
 
-  if (topics.length > 0) return topics.slice(0, limit);
+  if (topics.length > 0) {
+    const specificTopics =
+      topics.length > 1
+        ? topics.filter((topic) => topic.title !== "PDF'in Ana Mantığı")
+        : topics;
+
+    return specificTopics.slice(0, limit);
+  }
 
   return [
     {
@@ -857,6 +871,34 @@ export function calculateOutputQuality({
           module.blocks.some((block) => block.type === "core_explanation") &&
           module.blocks.some((block) => block.type === "mini_summary"),
       ),
+    lessonTextDeepEnough:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every(
+        (module) => countWords(module.lessonText) >= 500,
+      ),
+    lessonAnalogyPresent:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) =>
+        hasLessonSignal(module.lessonText, ["analoji", "benzet", "günlük hayatta"]),
+      ),
+    lessonExamplePresent:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) =>
+        hasLessonSignal(module.lessonText, ["örnek", "diyelim", "mesela"]),
+      ),
+    lessonExamAnglePresent:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) =>
+        hasLessonSignal(module.lessonText, ["sınavda", "vize", "final", "hoca"]),
+      ),
+    lessonNoRepeatedSentences:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every(
+        (module) => !hasRepeatedSentences(module.lessonText),
+      ),
+    lessonTitlesClean:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) => !isWeakTopicTitle(module.title)),
     lessonCheckpointsReady:
       Boolean(lesson) &&
       (lesson?.modules ?? []).every((module) =>
@@ -874,19 +916,25 @@ export function calculateOutputQuality({
       quiz.every((question) => sanitizeLearningText(question.moduleId).length > 0),
   };
   const weights: Record<keyof OutputQualityReport["checks"], number> = {
-    naturalTopicTitles: 10,
-    topicDescriptionsComplete: 10,
-    summaryMustKnowComplete: 8,
-    summaryFieldsComplete: 8,
-    quizExplanationsComplete: 10,
-    quizTopicsComplete: 8,
-    quizSourcePagesComplete: 7,
-    weakTopicsReady: 5,
-    lessonModulesReady: 10,
-    lessonBlocksComplete: 8,
-    lessonCheckpointsReady: 8,
-    lessonSourcePagesComplete: 5,
-    quizModuleLinksComplete: 3,
+    naturalTopicTitles: 8,
+    topicDescriptionsComplete: 8,
+    summaryMustKnowComplete: 7,
+    summaryFieldsComplete: 7,
+    quizExplanationsComplete: 8,
+    quizTopicsComplete: 6,
+    quizSourcePagesComplete: 6,
+    weakTopicsReady: 4,
+    lessonModulesReady: 6,
+    lessonBlocksComplete: 4,
+    lessonTextDeepEnough: 8,
+    lessonAnalogyPresent: 4,
+    lessonExamplePresent: 4,
+    lessonExamAnglePresent: 4,
+    lessonNoRepeatedSentences: 3,
+    lessonTitlesClean: 4,
+    lessonCheckpointsReady: 4,
+    lessonSourcePagesComplete: 3,
+    quizModuleLinksComplete: 2,
   };
   const rawScore = Object.entries(checks).reduce((total, [key, passed]) => {
     return total + (passed ? weights[key as keyof typeof checks] : 0);
@@ -1047,6 +1095,12 @@ function qualityWarningFor(key: keyof OutputQualityReport["checks"]) {
     weakTopicsReady: "Quiz sonucu zayıf konu analizi için yeterli topic verisi yok.",
     lessonModulesReady: "AI Ders modülleri oluşturulamadı.",
     lessonBlocksComplete: "Bazı ders modüllerinde öğretici bloklar eksik.",
+    lessonTextDeepEnough: "Bazı ders modülleri yeterince derin anlatılmamış.",
+    lessonAnalogyPresent: "Bazı ders modüllerinde günlük hayat analojisi eksik.",
+    lessonExamplePresent: "Bazı ders modüllerinde somut örnek eksik.",
+    lessonExamAnglePresent: "Bazı ders modüllerinde sınav yorumu eksik.",
+    lessonNoRepeatedSentences: "Bazı ders modüllerinde tekrar eden cümleler var.",
+    lessonTitlesClean: "Bazı ders modülü başlıkları doğal ders başlığı gibi görünmüyor.",
     lessonCheckpointsReady: "Bazı ders modüllerinde kontrol noktası eksik.",
     lessonSourcePagesComplete: "Bazı ders modüllerinde kaynak sayfa bilgisi eksik.",
     quizModuleLinksComplete: "Bazı quiz soruları ders modüllerine bağlanmamış.",
@@ -1063,6 +1117,21 @@ function buildLessonModule(
   const sourcePages = topic.sourcePages.length > 0 ? topic.sourcePages : [1];
   const title = cleanTeachingTitle(topic.title);
   const coreExplanation = explainTopic(title, topic.shortDescription);
+  const analogy = buildAnalogy(title);
+  const example = buildLessonExample(title);
+  const ruleExplanation = buildRuleExplanation(title);
+  const examAngle = buildExamAngle(title, sourcePages);
+  const lessonText = buildLessonText({
+    title,
+    courseName,
+    topic,
+    coreExplanation,
+    analogy,
+    example,
+    ruleExplanation,
+    examAngle,
+    sourcePages,
+  });
   const estimatedMinutes = topic.examLikelihood === "high" ? 10 : 8;
 
   return {
@@ -1080,6 +1149,7 @@ function buildLessonModule(
         : ["Önceki modülün ana fikrini anlamış olmak"],
     sourcePages,
     status: index === 0 ? "active" : "locked",
+    lessonText,
     blocks: [
       {
         type: "intro",
@@ -1093,7 +1163,7 @@ function buildLessonModule(
       {
         type: "analogy",
         title: "Gerçek hayat analojisi",
-        content: buildAnalogy(title),
+        content: analogy,
         question: null,
         options: null,
         correctAnswer: null,
@@ -1111,7 +1181,7 @@ function buildLessonModule(
       {
         type: "example",
         title: "Örnek",
-        content: buildLessonExample(title),
+        content: example,
         question: null,
         options: null,
         correctAnswer: null,
@@ -1120,7 +1190,7 @@ function buildLessonModule(
       {
         type: "formula",
         title: "Kural varsa: neden böyle?",
-        content: buildRuleExplanation(title),
+        content: `${ruleExplanation} ${examAngle}`,
         question: null,
         options: null,
         correctAnswer: null,
@@ -1149,6 +1219,61 @@ function buildLessonModule(
       },
     ],
   };
+}
+
+function buildLessonText({
+  title,
+  courseName,
+  topic,
+  coreExplanation,
+  analogy,
+  example,
+  ruleExplanation,
+  examAngle,
+  sourcePages,
+}: {
+  title: string;
+  courseName: string;
+  topic: StudyTopic;
+  coreExplanation: string;
+  analogy: string;
+  example: string;
+  ruleExplanation: string;
+  examAngle: string;
+  sourcePages: number[];
+}) {
+  const importance = topic.whyImportant || `${title} sınavda tanım ve yorum sorusu olarak karşına çıkabilir.`;
+  const source = `Kaynak: PDF sayfa ${sourcePages.join(", ")}.`;
+
+  return [
+    `Giriş\n${courseName} içinde ${title} başlığına çalışırken amacımız sadece tanımı ezberlemek değil. Bu modülde önce kavramın hangi problemi çözdüğünü, sonra PDF'teki anlatımın sınav cevabına nasıl dönüştürüleceğini kuracağız. İyi cevap, kavram adını söyleyip geçmez; "neden var, nasıl çalışır, hangi durumda kullanılır?" sorularına kısa ama mantıklı cevap verir.`,
+    `Kavramın mantığı\n${coreExplanation} ${topic.shortDescription} Bu noktada dikkat etmen gereken şey şu: PDF'teki teknik ifadeler bazen ham ve dağınık görünebilir, ama sınavda senden beklenen bunları düzenli bir düşünceye çevirmendir. ${title} için ana düşünce, sistemi daha anlaşılır veya daha yönetilebilir hale getiren bağlantıyı görmektir. Eğer kavramı bir cümlede anlatman gerekirse önce problemini söyle, sonra çözümünü ekle, en sonda küçük bir örnek ver.`,
+    `Günlük hayat analojisi\n${analogy} Analoji birebir teknik karşılık değildir; sadece akılda kalması için kullanılır. Buradaki amaç, soyut kavramı günlük bir düzene bağlamak. Böyle düşündüğünde PDF'teki başlıklar ayrı ayrı kelimeler gibi değil, aynı sistemin parçaları gibi görünmeye başlar.`,
+    `Teknik açıklama\n${ruleExplanation} Teknik tarafta "ne" kadar "nasıl" da önemlidir. Bir komut, yapı, dosya sistemi, bağlantı veya algoritma anlatılıyorsa önce girdiyi düşün: sistem ne alıyor? Sonra süreci düşün: bu bilgi hangi kurala göre işleniyor? Son olarak çıktıyı düşün: kullanıcı veya program ne sonuç görüyor? Bu üçlü mantık çoğu vize/final sorusunda cevap iskeleti olarak kullanılabilir.`,
+    `PDF'i okurken bunu ayırt et\nBu başlığı PDF'te gördüğünde ham kelimeleri tek tek ezberlemeye çalışma. Önce aynı anlama gelen ifadeleri grupla, sonra aralarındaki ilişkiyi kur. Örneğin bir sayfada komut, başka bir sayfada dosya yolu, başka bir yerde izin veya bağlantı geçiyorsa bunlar birbirinden kopuk ayrıntılar değildir; çoğu zaman aynı mekanizmanın farklı yüzleridir. UniKEY bu yüzden başlığı tek kelime olarak değil, sınavda anlatılabilir bir konu olarak düzenler.`,
+    `Somut örnek\n${example} Örneği cevabına eklemek seni ham tanımdan çıkarır. Mesela hoca "${title} ne işe yarar?" diye sorduğunda yalnızca tanım yazarsan cevap eksik kalabilir. Tanımdan sonra "örneğin..." diye başlayıp küçük bir senaryo kurduğunda hem kavramı anladığını hem de kullanabildiğini göstermiş olursun.`,
+    `Sınavda nasıl gelir?\n${examAngle} ${importance} Böyle bir soruda iyi cevap genellikle üç parçalıdır: önce kısa tanım, sonra mekanizma, en son örnek veya sonuç. Eğer soru yorum istiyorsa "bu yapı olmasaydı ne zorlaşırdı?" diye düşün. Bu soru seni doğrudan kavramın neden önemli olduğuna götürür.`,
+    `Mini özet\n${title} için akılda kalacak ana fikir şudur: kavramı bir isim olarak değil, bir problemi çözen düzen olarak gör. Tanımı bil, ama tanımı mutlaka amaç ve örnekle bağla. ${source}`,
+    `Kontrol noktası\nBuraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?`,
+  ].join("\n\n");
+}
+
+function buildExamAngle(title: string, sourcePages: number[]) {
+  const source = `Kaynak: PDF sayfa ${sourcePages.join(", ")}.`;
+
+  if (/working directory|path|dizin|yol/i.test(title)) {
+    return `Sınavda bu konu genellikle "göreli yol hangi dizine göre çözülür?" veya "working directory değişirse komutun sonucu neden değişir?" şeklinde gelir. Cevapta mevcut konumu, göreli yolu ve mutlak yolu birbirinden ayırman beklenir. ${source}`;
+  }
+
+  if (/nfs|ağ|network/i.test(title)) {
+    return `Sınavda NFS veya ağ dosya sistemi sorusu geldiğinde ana beklenti, dosyanın fiziksel olarak başka makinede durmasına rağmen yerel dosya gibi kullanılabilmesini açıklamandır. Avantajı paylaşım ve merkezi yönetimdir; risk tarafında gecikme, erişim izni ve ağ bağımlılığı vardır. ${source}`;
+  }
+
+  if (/everything is a file|dosyadır|dosya sistemi/i.test(title)) {
+    return `Sınavda bu başlık "UNIX neden birçok kaynağı dosya gibi temsil eder?" diye sorulabilir. İyi cevap, dosya, dizin ve aygıtların ortak bir arayüzle okunup yazılabildiğini, bunun sistemi sadeleştirdiğini söyler. ${source}`;
+  }
+
+  return `Sınavda bu başlık doğrudan tanım olarak değil, "hangi durumda kullanılır, hangi problemi çözer, örnekle açıklayın" formatında sorulabilir. Cevabında kısa tanım, çalışma mantığı ve küçük bir örnek mutlaka birlikte yer almalı. ${source}`;
 }
 
 function buildQuestionForTopic(
@@ -1286,7 +1411,7 @@ function buildQuestionForTopic(
   }
 
   return {
-    question: `${title} konusunu sınavda açıklarken hangi ifade en doğrudur?`,
+    question: buildNaturalQuestion(title),
     options: shuffleOptions([
       explainTopic(title, topic.shortDescription),
       ...distractors,
@@ -1297,6 +1422,22 @@ function buildQuestionForTopic(
     difficulty,
     sourcePage: firstSourcePage(topic),
   };
+}
+
+function buildNaturalQuestion(title: string) {
+  if (/dosya|file/i.test(title)) {
+    return `${title} anlatılırken dosya, dizin ve erişim mantığı arasındaki ilişki nasıl kurulmalıdır?`;
+  }
+
+  if (/işlem|process|zamanlama|scheduling/i.test(title)) {
+    return `${title} içinde sistemin hangi işi önce çalıştıracağına karar vermesi hangi mantığa dayanır?`;
+  }
+
+  if (/port|ip|adres|socket|tcp|bağlantı/i.test(title)) {
+    return `${title} ağ iletişiminde iki tarafın doğru şekilde haberleşmesini nasıl etkiler?`;
+  }
+
+  return `${title} sınavda sorulduğunda kavramın çalışma mantığını en iyi açıklayan ifade hangisidir?`;
 }
 
 function inferLessonDifficulty(topics: StudyTopic[]): LessonDifficulty {
@@ -1467,6 +1608,24 @@ function buildCommonConfusions(topics: StudyTopic[]) {
 }
 
 function topicTitleFromKeyword(keyword: string) {
+  const normalizedKeyword = normalizeTechLower(keyword);
+
+  if (/decides which|scheduling|scheduler|ready queue/.test(normalizedKeyword)) {
+    return "Zamanlayıcının Süreç Seçme Mantığı";
+  }
+
+  if (/bursts priority|priority scheduling|starvation/.test(normalizedKeyword)) {
+    return "Priority Scheduling ve Starvation Riski";
+  }
+
+  if (/bursts ready|cpu burst|context switching/.test(normalizedKeyword)) {
+    return "CPU Burst ve Ready Queue Mantığı";
+  }
+
+  if (/each process|round robin|time quantum/.test(normalizedKeyword)) {
+    return "Round Robin ve Zaman Dilimi Mantığı";
+  }
+
   const readable = titleCase(humanizeTerm(keyword));
   if (isWeakTopicTitle(readable)) return "PDF'in Ana Mantığı";
   if (/sistem|system/i.test(readable)) return `${readable} Temelleri`;
@@ -1496,12 +1655,16 @@ function isWeakTopicTitle(title: string) {
     /^(Other|Command|File|Chapter|Notes?|PDF|Sayfa|The|And|For)\b/i.test(title) ||
     /^Unix$/i.test(title) ||
     /\b(each line|konusu|other|command)\b/i.test(normalized) ||
+    /^(each|decides|bursts)\b/i.test(normalized) ||
     normalized.split(/\s+/).length < 2
   );
 }
 
 function cleanTeachingTitle(title: string) {
   const cleaned = title
+    .replace(/\s+başlığının\s+ne\s+anlattığını\s+açıklayabilmek\b/gi, "")
+    .replace(/\s+konusunun\s+ne\s+anlattığını\s+açıklayabilmek\b/gi, "")
+    .replace(/\s+konusunu\s+açıklayabilmek\b/gi, "")
     .replace(/\bKonusu\b/gi, "Temelleri")
     .replace(/\bEach Line\b/gi, "")
     .replace(/\bOther\b/gi, "")
@@ -1514,6 +1677,31 @@ function cleanTeachingTitle(title: string) {
   }
 
   return cleaned;
+}
+
+function countWords(value: string) {
+  return sanitizeLearningText(value)
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+function hasLessonSignal(value: string, signals: string[]) {
+  const normalized = value.toLocaleLowerCase("tr");
+  return signals.some((signal) => normalized.includes(signal.toLocaleLowerCase("tr")));
+}
+
+function hasRepeatedSentences(value: string) {
+  const sentences = splitSentences(value)
+    .map((sentence) => normalizeTechLower(sentence))
+    .filter((sentence) => sentence.length > 30);
+  const seen = new Set<string>();
+
+  for (const sentence of sentences) {
+    if (seen.has(sentence)) return true;
+    seen.add(sentence);
+  }
+
+  return false;
 }
 
 function cleanPdfArtifact(value: string) {

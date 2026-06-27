@@ -1356,8 +1356,12 @@ button {
 .lesson-assist-note p,
 .lesson-narrative-card p {
   color: #dbe4f0;
-  line-height: 1.7;
+  line-height: 1.78;
   margin: 0.45rem 0 0;
+}
+
+.lesson-narrative-card .lesson-text {
+  white-space: pre-line;
 }
 
 .lesson-narrative-card {

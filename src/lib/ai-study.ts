@@ -116,6 +116,7 @@ JSON şeması tam olarak şu yapıda olsun:
         "prerequisites": ["Gerekli ön bilgi yoksa boş bırakma, kısa yaz"],
         "sourcePages": [1],
         "status": "active | locked | completed",
+        "lessonText": "700-1200 kelimelik tek parça, akıcı, ofis saati tarzı Türkçe ders anlatımı",
         "blocks": [
           {
             "type": "intro | analogy | core_explanation | example | formula | mini_summary | checkpoint",
@@ -193,15 +194,22 @@ Zorunlu kurallar:
 - sourcePages ve sourcePage sadece sayı olsun. Sayfa bilinmiyorsa 1 yaz.
 - PDF'te olmayan bilgiyi uydurma.
 - Ana deneyim summary değil lesson olacak; lesson alanını mutlaka doldur.
+- Her module için lessonText alanı zorunludur. Kullanıcıya gösterilecek asıl ders metni lessonText'tir.
+- lessonText 700-1200 kelime arası güçlü bir ders anlatımı olsun. 500 kelimeden kısa üretme.
+- lessonText doğal başlıklarla şu akışı içersin: Giriş, kavramın mantığı, günlük hayat analojisi, teknik açıklama, somut örnek, sınavda nasıl gelir, mini özet, kontrol noktası.
+- "Bu modülde öğreneceğiz" kısmı kuru hedef listesi değil, kısa giriş paragrafı gibi yazılsın.
+- Sadece tanım verme; neden, nasıl, örnek ve sınav yorumu mutlaka olsun.
+- Kod, komut veya teknik yapı varsa somut örnekle açıkla. Ham kod satırını kopyalayıp bırakma.
 - JSON'da blocks alanı kalsın ama kullanıcıya tek akıcı ders gibi okunacak içerik üret.
 - Her module için intro, analogy, core_explanation, example, formula, mini_summary ve checkpoint olmalı.
 - intro kısa müfredat hissi versin; core_explanation ofis saati gibi akıcı ana anlatım olsun.
 - Blok content alanlarında "Ana anlatım:", "Mini özet:", "Kontrol noktası:" gibi kendi başlığını tekrar etme.
 - Checkpoint yalnızca bir soru taşısın: "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?"
 - İlk module status "active", diğerleri "locked" olsun.
-- Her modül toplamda yaklaşık 500-900 kelime arası olsun; tek tek çok kısa parçalar yazma.
+- Her modül toplamda yaklaşık 700-1200 kelime arası olsun; tek tek çok kısa parçalar yazma.
 - Metin ders anlatımı gibi aksın: önce ne öğreneceğiz, sonra ana fikir, sonra analoji, örnek, önem ve mini özet.
 - Quiz sorularında mümkünse moduleId alanını ilgili modül id'siyle eşleştir.
+- Quiz soruları lessonText içindeki gerçek anlatıma dayansın; "Bu konu neden önemlidir?" gibi genel kalıp soru yazma.
 `;
 
   const output = await safeCallOpenAi(prompt);
@@ -508,6 +516,11 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
                 !looksLikeRawPdfDump(block.content),
             )
         : [];
+      const lessonText = sanitizeLessonText(module?.lessonText);
+      const fallbackLessonText = composeLessonTextFromBlocks(
+        cleanTeachingTitle(sanitizeText(module?.title)),
+        blocks,
+      );
 
       return {
         id: sanitizeText(module?.id) || `modul-${index + 1}`,
@@ -517,6 +530,7 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
         prerequisites: normalizeStringArray(module?.prerequisites, 3),
         sourcePages: normalizeSourcePages(module?.sourcePages),
         status: normalizeModuleStatus(module?.status, index),
+        lessonText: lessonText || fallbackLessonText,
         blocks,
       };
     })
@@ -525,6 +539,7 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
         module.title.length > 5 &&
         !isWeakTeachingTitle(module.title) &&
         module.learningGoals.length > 0 &&
+        isStrongLessonText(module.lessonText, module.sourcePages) &&
         module.blocks.some((block) => block.type === "core_explanation") &&
         module.blocks.some((block) => block.type === "checkpoint"),
     )
@@ -670,8 +685,85 @@ function sanitizeText(value: unknown) {
     : "";
 }
 
+function sanitizeLessonText(value: unknown) {
+  return typeof value === "string"
+    ? value
+        .replace(/\[Sayfa\s+\d+\]\s*/gi, "")
+        .replace(/\r\n/g, "\n")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+    : "";
+}
+
+function composeLessonTextFromBlocks(
+  title: string,
+  blocks: Array<{
+    type: LessonBlockType;
+    title: string;
+    content: string;
+    question: string | null;
+  }>,
+) {
+  const blockByType = blocks.reduce<Partial<Record<LessonBlockType, string>>>(
+    (items, block) => {
+      if (!items[block.type]) items[block.type] = block.content;
+      return items;
+    },
+    {},
+  );
+
+  return [
+    `Giriş\n${blockByType.intro ?? `${title} başlığını sınavda anlatabilecek şekilde kuracağız.`}`,
+    `Kavramın mantığı\n${blockByType.core_explanation ?? ""}`,
+    `Günlük hayat analojisi\n${blockByType.analogy ?? ""}`,
+    `Somut örnek\n${blockByType.example ?? ""}`,
+    `Sınavda nasıl gelir?\n${blockByType.formula ?? ""}`,
+    `Mini özet\n${blockByType.mini_summary ?? ""}`,
+    `Kontrol noktası\n${blockByType.checkpoint ?? "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?"}`,
+  ]
+    .filter((section) => section.trim().length > 20)
+    .join("\n\n");
+}
+
+function isStrongLessonText(text: string, sourcePages: number[]) {
+  if (countWords(text) < 500) return false;
+  if (sourcePages.length === 0) return false;
+  if (looksLikeRawPdfDump(text)) return false;
+  if (hasRepeatedSentences(text)) return false;
+
+  const normalized = text.toLocaleLowerCase("tr");
+  const hasAnalogy = /analoji|benzet|günlük hayat|günlük hayatta/.test(normalized);
+  const hasExample = /örnek|mesela|diyelim/.test(normalized);
+  const hasExamAngle = /sınavda|vizede|finalde|hoca/.test(normalized);
+
+  return hasAnalogy && hasExample && hasExamAngle;
+}
+
+function countWords(value: string) {
+  return value.split(/\s+/).filter(Boolean).length;
+}
+
+function hasRepeatedSentences(value: string) {
+  const sentences = value
+    .split(/[.!?]\s+/)
+    .map((sentence) => sentence.toLocaleLowerCase("tr").replace(/\s+/g, " ").trim())
+    .filter((sentence) => sentence.length > 35);
+  const seen = new Set<string>();
+
+  for (const sentence of sentences) {
+    if (seen.has(sentence)) return true;
+    seen.add(sentence);
+  }
+
+  return false;
+}
+
 function cleanTeachingTitle(title: string) {
   const cleaned = title
+    .replace(/\s+başlığının\s+ne\s+anlattığını\s+açıklayabilmek\b/gi, "")
+    .replace(/\s+konusunun\s+ne\s+anlattığını\s+açıklayabilmek\b/gi, "")
+    .replace(/\s+konusunu\s+açıklayabilmek\b/gi, "")
     .replace(/\bKonusu\b/gi, "Temelleri")
     .replace(/\bEach Line\b/gi, "")
     .replace(/\bOther\b/gi, "")
