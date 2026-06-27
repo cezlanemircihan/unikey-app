@@ -90,12 +90,16 @@ export async function POST(request: Request) {
       (question) => !question.moduleId,
     ).length;
     const lessonModuleCount = pack.lesson.modules.length;
-    const lessonBlockCount = pack.lesson.modules.reduce(
-      (total, module) => total + module.blocks.length,
-      0,
-    );
-    const missingCheckpointCount = pack.lesson.modules.filter(
-      (module) => !module.blocks.some((block) => block.type === "checkpoint"),
+    const shortLectureTranscriptCount = pack.lesson.modules.filter(
+      (module) =>
+        (module.lectureTranscript || module.lessonText || "")
+          .split(/\s+/)
+          .filter(Boolean).length < 500,
+    ).length;
+    const bannedLectureLabelCount = pack.lesson.modules.filter((module) =>
+      /(^|\n)\s*(Giriş|Kavramın mantığı|Teknik açıklama|PDF'?i okurken|PDF’yi okurken|Mini özet|Neden önemli|Günlük hayat analojisi|Kontrol noktası)\s*:?\s*(\n|$)/i.test(
+        module.lectureTranscript || module.lessonText || "",
+      ),
     ).length;
     const missingModuleSourcePageCount = pack.lesson.modules.filter(
       (module) => module.sourcePages.length === 0,
@@ -114,8 +118,8 @@ export async function POST(request: Request) {
       missingTopicCount,
       missingSourcePageCount,
       lessonModuleCount,
-      lessonBlockCount,
-      missingCheckpointCount,
+      shortLectureTranscriptCount,
+      bannedLectureLabelCount,
       missingModuleSourcePageCount,
       missingQuizModuleLinkCount,
       lessonQualityScore: quality.score,

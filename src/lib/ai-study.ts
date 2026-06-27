@@ -89,9 +89,15 @@ export async function generateAiStudyPackWithDebug({
   }
 
   const prompt = `
-Sen ÜniKEY uygulamasının vize/final odaklı AI sınav koçusun.
-Amaç PDF özetleyici gibi ham metin kopyalamak değil; PDF'i anlayıp öğrencinin sınavda kullanacağı öğretilebilir Türkçe çalışma çıktısı üretmek.
-PDF hangi dilde olursa olsun öğrenciye her zaman Türkçe anlat. Teknik terimler korunabilir ama açıklamaları Türkçe olmalı.
+Sen ÜniKEY'in AI Lesson Engine'isin.
+Görevin PDF özeti, ders notu veya başlık başlık açıklama yazmak değil.
+Kendini üniversitede ofis saatindeki bir öğretim üyesi gibi düşün:
+- Karşında dersi kaçırmış bir öğrenci var.
+- Elinde sadece hocanın PDF'i var.
+- PDF'teki bilgileri kullanarak öğrenciye konuyu gerçekten anlatıyorsun.
+- Metin okunmak için hazırlanmış markdown notu gibi değil, konuşulmak için yazılmış ders anlatımı gibi akmalı.
+
+PDF hangi dilde olursa olsun öğrenciye her zaman doğal Türkçe anlat. Teknik terimler gerekiyorsa korunabilir ama cümle Türkçe olmalı.
 
 Ders: ${courseName}
 PDF adı: ${documentName}
@@ -116,18 +122,8 @@ JSON şeması tam olarak şu yapıda olsun:
         "prerequisites": ["Gerekli ön bilgi yoksa boş bırakma, kısa yaz"],
         "sourcePages": [1],
         "status": "active | locked | completed",
-        "lessonText": "700-1200 kelimelik tek parça, akıcı, ofis saati tarzı Türkçe ders anlatımı",
-        "blocks": [
-          {
-            "type": "intro | analogy | core_explanation | example | formula | mini_summary | checkpoint",
-            "title": "Blok başlığı",
-            "content": "Akıcı, öğretici, ofis saati tarzı Türkçe içerik",
-            "question": null,
-            "options": null,
-            "correctAnswer": null,
-            "explanation": null
-          }
-        ]
+        "lectureTranscript": "Ofis saatinde hocanın öğrenciye konuşarak anlattığı tek parça doğal Türkçe ders transcript'i",
+        "blocks": []
       }
     ],
     "finalQuiz": {
@@ -193,23 +189,21 @@ Zorunlu kurallar:
 - Quiz açıklaması öğrencinin yanlışını düzeltecek kadar öğretici olsun.
 - sourcePages ve sourcePage sadece sayı olsun. Sayfa bilinmiyorsa 1 yaz.
 - PDF'te olmayan bilgiyi uydurma.
-- Ana deneyim summary değil lesson olacak; lesson alanını mutlaka doldur.
-- Her module için lessonText alanı zorunludur. Kullanıcıya gösterilecek asıl ders metni lessonText'tir.
-- lessonText 700-1200 kelime arası güçlü bir ders anlatımı olsun. 500 kelimeden kısa üretme.
-- lessonText doğal başlıklarla şu akışı içersin: Giriş, kavramın mantığı, günlük hayat analojisi, teknik açıklama, somut örnek, sınavda nasıl gelir, mini özet, kontrol noktası.
-- "Bu modülde öğreneceğiz" kısmı kuru hedef listesi değil, kısa giriş paragrafı gibi yazılsın.
-- Sadece tanım verme; neden, nasıl, örnek ve sınav yorumu mutlaka olsun.
-- Kod, komut veya teknik yapı varsa somut örnekle açıkla. Ham kod satırını kopyalayıp bırakma.
-- JSON'da blocks alanı kalsın ama kullanıcıya tek akıcı ders gibi okunacak içerik üret.
-- Her module için intro, analogy, core_explanation, example, formula, mini_summary ve checkpoint olmalı.
-- intro kısa müfredat hissi versin; core_explanation ofis saati gibi akıcı ana anlatım olsun.
-- Blok content alanlarında "Ana anlatım:", "Mini özet:", "Kontrol noktası:" gibi kendi başlığını tekrar etme.
-- Checkpoint yalnızca bir soru taşısın: "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?"
+- Ana deneyim summary değil lectureTranscript olacak; lesson.modules içindeki her module için lectureTranscript alanını mutlaka doldur.
+- lectureTranscript 700-1200 kelime arası tek parça konuşma metni olsun. 500 kelimeden kısa üretme.
+- lectureTranscript içinde markdown başlığı, madde listesi, bölüm etiketi veya ders notu formatı kullanma.
+- Şu ifadeleri ASLA lectureTranscript içinde üretme: "Giriş", "Kavramın mantığı", "Teknik açıklama", "PDF'yi okurken", "PDF’i okurken", "Mini özet", "Neden önemli", "Günlük hayat analojisi", "Kontrol noktası".
+- İlk paragraf tanım vermesin. Önce merak uyandıran bir problemle başlasın.
+- İlk cümle "X nedir" veya "X, ..." gibi tanım cümlesi olmasın.
+- Önce problemi anlat, sonra neden böyle bir çözüme ihtiyaç olduğunu anlat, sonra kavrama geç.
+- Analoji gerekiyorsa doğal konuşmanın içinde gelsin; "şimdi analoji kısmına geçelim" deme.
+- Örnek gerekiyorsa doğal konuşmanın içinde gelsin; "örnek bölümü" gibi başlık atma.
+- Sınav yorumu doğal konuşmanın içinde gelsin; "sınavda şöyle gelebilir" diyebilirsin ama başlık atma.
+- En son cümle tam olarak şuna yakın bitsin: "Buraya kadar kafana yatmayan bir yer var mı?"
+- blocks alanı eski uyumluluk için kalsın ama boş array olabilir. Kullanıcıya gösterilecek ana metin blocks değil lectureTranscript'tir.
 - İlk module status "active", diğerleri "locked" olsun.
-- Her modül toplamda yaklaşık 700-1200 kelime arası olsun; tek tek çok kısa parçalar yazma.
-- Metin ders anlatımı gibi aksın: önce ne öğreneceğiz, sonra ana fikir, sonra analoji, örnek, önem ve mini özet.
 - Quiz sorularında mümkünse moduleId alanını ilgili modül id'siyle eşleştir.
-- Quiz soruları lessonText içindeki gerçek anlatıma dayansın; "Bu konu neden önemlidir?" gibi genel kalıp soru yazma.
+- Quiz soruları lectureTranscript içindeki gerçek anlatıma dayansın; "Bu konu neden önemlidir?" gibi genel kalıp soru yazma.
 `;
 
   const output = await safeCallOpenAi(prompt);
@@ -516,8 +510,10 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
                 !looksLikeRawPdfDump(block.content),
             )
         : [];
-      const lessonText = sanitizeLessonText(module?.lessonText);
-      const fallbackLessonText = composeLessonTextFromBlocks(
+      const lectureTranscript = sanitizeLectureTranscript(
+        module?.lectureTranscript ?? module?.lessonText,
+      );
+      const fallbackLectureTranscript = composeTranscriptFromBlocks(
         cleanTeachingTitle(sanitizeText(module?.title)),
         blocks,
       );
@@ -530,7 +526,8 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
         prerequisites: normalizeStringArray(module?.prerequisites, 3),
         sourcePages: normalizeSourcePages(module?.sourcePages),
         status: normalizeModuleStatus(module?.status, index),
-        lessonText: lessonText || fallbackLessonText,
+        lectureTranscript: lectureTranscript || fallbackLectureTranscript,
+        lessonText: lectureTranscript || fallbackLectureTranscript,
         blocks,
       };
     })
@@ -539,9 +536,7 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
         module.title.length > 5 &&
         !isWeakTeachingTitle(module.title) &&
         module.learningGoals.length > 0 &&
-        isStrongLessonText(module.lessonText, module.sourcePages) &&
-        module.blocks.some((block) => block.type === "core_explanation") &&
-        module.blocks.some((block) => block.type === "checkpoint"),
+        isStrongLectureTranscript(module.lectureTranscript, module.sourcePages),
     )
     .slice(0, 6);
 
@@ -685,7 +680,7 @@ function sanitizeText(value: unknown) {
     : "";
 }
 
-function sanitizeLessonText(value: unknown) {
+function sanitizeLectureTranscript(value: unknown) {
   return typeof value === "string"
     ? value
         .replace(/\[Sayfa\s+\d+\]\s*/gi, "")
@@ -696,7 +691,7 @@ function sanitizeLessonText(value: unknown) {
     : "";
 }
 
-function composeLessonTextFromBlocks(
+function composeTranscriptFromBlocks(
   title: string,
   blocks: Array<{
     type: LessonBlockType;
@@ -714,30 +709,32 @@ function composeLessonTextFromBlocks(
   );
 
   return [
-    `Giriş\n${blockByType.intro ?? `${title} başlığını sınavda anlatabilecek şekilde kuracağız.`}`,
-    `Kavramın mantığı\n${blockByType.core_explanation ?? ""}`,
-    `Günlük hayat analojisi\n${blockByType.analogy ?? ""}`,
-    `Somut örnek\n${blockByType.example ?? ""}`,
-    `Sınavda nasıl gelir?\n${blockByType.formula ?? ""}`,
-    `Mini özet\n${blockByType.mini_summary ?? ""}`,
-    `Kontrol noktası\n${blockByType.checkpoint ?? "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?"}`,
+    `Bu konuyu kaçırdıysan ilk bakışta ${title} sadece ezberlenecek bir başlık gibi görünebilir. Ama asıl mesele, PDF'te anlatılan düzenin hangi problemi çözdüğünü fark etmek.`,
+    blockByType.core_explanation ?? "",
+    blockByType.analogy ?? "",
+    blockByType.example ?? "",
+    blockByType.formula ?? "",
+    blockByType.mini_summary ?? "",
+    "Buraya kadar kafana yatmayan bir yer var mı?",
   ]
     .filter((section) => section.trim().length > 20)
     .join("\n\n");
 }
 
-function isStrongLessonText(text: string, sourcePages: number[]) {
+function isStrongLectureTranscript(text: string, sourcePages: number[]) {
   if (countWords(text) < 500) return false;
   if (sourcePages.length === 0) return false;
   if (looksLikeRawPdfDump(text)) return false;
   if (hasRepeatedSentences(text)) return false;
+  if (hasBannedLectureLabel(text)) return false;
+  if (!startsWithProblemHook(text)) return false;
+  if (!/kafana yatmayan bir yer var mı\??$/i.test(text.trim())) return false;
 
   const normalized = text.toLocaleLowerCase("tr");
-  const hasAnalogy = /analoji|benzet|günlük hayat|günlük hayatta/.test(normalized);
   const hasExample = /örnek|mesela|diyelim/.test(normalized);
   const hasExamAngle = /sınavda|vizede|finalde|hoca/.test(normalized);
 
-  return hasAnalogy && hasExample && hasExamAngle;
+  return hasExample && hasExamAngle;
 }
 
 function countWords(value: string) {
@@ -757,6 +754,24 @@ function hasRepeatedSentences(value: string) {
   }
 
   return false;
+}
+
+function hasBannedLectureLabel(value: string) {
+  return /(^|\n)\s*(Giriş|Kavramın mantığı|Teknik açıklama|PDF'?i okurken|PDF’yi okurken|Mini özet|Neden önemli|Günlük hayat analojisi|Kontrol noktası)\s*:?\s*(\n|$)/i.test(
+    value,
+  );
+}
+
+function startsWithProblemHook(value: string) {
+  const firstSentence = value.split(/[.!?]\s+/)[0] ?? "";
+  if (!firstSentence.trim()) return false;
+
+  return (
+    /\?/.test(firstSentence) ||
+    /\b(hiç düşündün mü|ilk bakışta|asıl ilginç olan|zor kısım|var;|görünür;|neden)\b/i.test(
+      firstSentence,
+    )
+  );
 }
 
 function cleanTeachingTitle(title: string) {

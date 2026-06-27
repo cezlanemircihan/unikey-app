@@ -80,7 +80,8 @@ export type LessonModule = {
   prerequisites: string[];
   sourcePages: number[];
   status: LessonModuleStatus;
-  lessonText: string;
+  lectureTranscript: string;
+  lessonText?: string;
   blocks: LessonBlock[];
 };
 
@@ -134,14 +135,15 @@ export type OutputQualityReport = {
     quizSourcePagesComplete: boolean;
     weakTopicsReady: boolean;
     lessonModulesReady: boolean;
-    lessonBlocksComplete: boolean;
-    lessonTextDeepEnough: boolean;
-    lessonAnalogyPresent: boolean;
-    lessonExamplePresent: boolean;
-    lessonExamAnglePresent: boolean;
-    lessonNoRepeatedSentences: boolean;
+    lectureTranscriptDeepEnough: boolean;
+    lectureTranscriptNaturalFlow: boolean;
+    lectureTranscriptProblemFirst: boolean;
+    lectureTranscriptExamplePresent: boolean;
+    lectureTranscriptExamAnglePresent: boolean;
+    lectureTranscriptNoBannedLabels: boolean;
+    lectureTranscriptNoRepeatedSentences: boolean;
+    lectureTranscriptEndsWithQuestion: boolean;
     lessonTitlesClean: boolean;
-    lessonCheckpointsReady: boolean;
     lessonSourcePagesComplete: boolean;
     quizModuleLinksComplete: boolean;
   };
@@ -863,51 +865,51 @@ export function calculateOutputQuality({
       quiz.some((question) => sanitizeLearningText(question.topic).length > 3),
     lessonModulesReady:
       Boolean(lesson) && (lesson?.modules.length ?? 0) > 0,
-    lessonBlocksComplete:
+    lectureTranscriptDeepEnough:
       Boolean(lesson) &&
       (lesson?.modules ?? []).every(
-        (module) =>
-          module.blocks.length >= 5 &&
-          module.blocks.some((block) => block.type === "core_explanation") &&
-          module.blocks.some((block) => block.type === "mini_summary"),
+        (module) => countWords(readLectureTranscript(module)) >= 500,
       ),
-    lessonTextDeepEnough:
+    lectureTranscriptNaturalFlow:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) =>
+        isNaturalLectureTranscript(readLectureTranscript(module)),
+      ),
+    lectureTranscriptProblemFirst:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) =>
+        startsWithProblemHook(readLectureTranscript(module)),
+      ),
+    lectureTranscriptExamplePresent:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) =>
+        hasLessonSignal(readLectureTranscript(module), ["örnek", "diyelim", "mesela"]),
+      ),
+    lectureTranscriptExamAnglePresent:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) =>
+        hasLessonSignal(readLectureTranscript(module), ["sınavda", "vize", "final", "hoca"]),
+      ),
+    lectureTranscriptNoBannedLabels:
       Boolean(lesson) &&
       (lesson?.modules ?? []).every(
-        (module) => countWords(module.lessonText) >= 500,
+        (module) => !hasBannedLectureLabel(readLectureTranscript(module)),
       ),
-    lessonAnalogyPresent:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every((module) =>
-        hasLessonSignal(module.lessonText, ["analoji", "benzet", "günlük hayatta"]),
-      ),
-    lessonExamplePresent:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every((module) =>
-        hasLessonSignal(module.lessonText, ["örnek", "diyelim", "mesela"]),
-      ),
-    lessonExamAnglePresent:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every((module) =>
-        hasLessonSignal(module.lessonText, ["sınavda", "vize", "final", "hoca"]),
-      ),
-    lessonNoRepeatedSentences:
+    lectureTranscriptNoRepeatedSentences:
       Boolean(lesson) &&
       (lesson?.modules ?? []).every(
-        (module) => !hasRepeatedSentences(module.lessonText),
+        (module) => !hasRepeatedSentences(readLectureTranscript(module)),
+      ),
+    lectureTranscriptEndsWithQuestion:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) =>
+        /kafana yatmayan bir yer var mı\??$/i.test(
+          readLectureTranscript(module).trim(),
+        ),
       ),
     lessonTitlesClean:
       Boolean(lesson) &&
       (lesson?.modules ?? []).every((module) => !isWeakTopicTitle(module.title)),
-    lessonCheckpointsReady:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every((module) =>
-        module.blocks.some(
-          (block) =>
-            block.type === "checkpoint" &&
-            sanitizeLearningText(block.question ?? block.content).length > 20,
-        ),
-      ),
     lessonSourcePagesComplete:
       Boolean(lesson) &&
       (lesson?.modules ?? []).every((module) => module.sourcePages.length > 0),
@@ -925,14 +927,15 @@ export function calculateOutputQuality({
     quizSourcePagesComplete: 6,
     weakTopicsReady: 4,
     lessonModulesReady: 6,
-    lessonBlocksComplete: 4,
-    lessonTextDeepEnough: 8,
-    lessonAnalogyPresent: 4,
-    lessonExamplePresent: 4,
-    lessonExamAnglePresent: 4,
-    lessonNoRepeatedSentences: 3,
+    lectureTranscriptDeepEnough: 8,
+    lectureTranscriptNaturalFlow: 5,
+    lectureTranscriptProblemFirst: 4,
+    lectureTranscriptExamplePresent: 4,
+    lectureTranscriptExamAnglePresent: 4,
+    lectureTranscriptNoBannedLabels: 4,
+    lectureTranscriptNoRepeatedSentences: 3,
+    lectureTranscriptEndsWithQuestion: 3,
     lessonTitlesClean: 4,
-    lessonCheckpointsReady: 4,
     lessonSourcePagesComplete: 3,
     quizModuleLinksComplete: 2,
   };
@@ -1094,14 +1097,15 @@ function qualityWarningFor(key: keyof OutputQualityReport["checks"]) {
     quizSourcePagesComplete: "Bazı quiz sorularında kaynak sayfa bilgisi eksik.",
     weakTopicsReady: "Quiz sonucu zayıf konu analizi için yeterli topic verisi yok.",
     lessonModulesReady: "AI Ders modülleri oluşturulamadı.",
-    lessonBlocksComplete: "Bazı ders modüllerinde öğretici bloklar eksik.",
-    lessonTextDeepEnough: "Bazı ders modülleri yeterince derin anlatılmamış.",
-    lessonAnalogyPresent: "Bazı ders modüllerinde günlük hayat analojisi eksik.",
-    lessonExamplePresent: "Bazı ders modüllerinde somut örnek eksik.",
-    lessonExamAnglePresent: "Bazı ders modüllerinde sınav yorumu eksik.",
-    lessonNoRepeatedSentences: "Bazı ders modüllerinde tekrar eden cümleler var.",
+    lectureTranscriptDeepEnough: "Bazı ders konuşmaları yeterince derin anlatılmamış.",
+    lectureTranscriptNaturalFlow: "Bazı ders konuşmaları ders notu gibi kalmış.",
+    lectureTranscriptProblemFirst: "Bazı ders konuşmaları problemle veya merak uyandıran bir girişle başlamıyor.",
+    lectureTranscriptExamplePresent: "Bazı ders konuşmalarında somut örnek eksik.",
+    lectureTranscriptExamAnglePresent: "Bazı ders konuşmalarında sınav yorumu eksik.",
+    lectureTranscriptNoBannedLabels: "Bazı ders konuşmalarında yasaklı ders-notu başlıkları var.",
+    lectureTranscriptNoRepeatedSentences: "Bazı ders konuşmalarında tekrar eden cümleler var.",
+    lectureTranscriptEndsWithQuestion: "Bazı ders konuşmaları doğal kontrol sorusuyla bitmiyor.",
     lessonTitlesClean: "Bazı ders modülü başlıkları doğal ders başlığı gibi görünmüyor.",
-    lessonCheckpointsReady: "Bazı ders modüllerinde kontrol noktası eksik.",
     lessonSourcePagesComplete: "Bazı ders modüllerinde kaynak sayfa bilgisi eksik.",
     quizModuleLinksComplete: "Bazı quiz soruları ders modüllerine bağlanmamış.",
   };
@@ -1121,7 +1125,7 @@ function buildLessonModule(
   const example = buildLessonExample(title);
   const ruleExplanation = buildRuleExplanation(title);
   const examAngle = buildExamAngle(title, sourcePages);
-  const lessonText = buildLessonText({
+  const lectureTranscript = buildLectureTranscript({
     title,
     courseName,
     topic,
@@ -1149,79 +1153,12 @@ function buildLessonModule(
         : ["Önceki modülün ana fikrini anlamış olmak"],
     sourcePages,
     status: index === 0 ? "active" : "locked",
-    lessonText,
-    blocks: [
-      {
-        type: "intro",
-        title: "Bu modülde öğreneceğiz",
-        content: `${courseName} içinde bu modülün amacı ${title} başlığını sınavda anlatabilecek kadar netleştirmek. Önce kavramın hangi problemi çözdüğünü kuracağız, sonra PDF'teki bağlamı günlük bir örnekle ilişkilendireceğiz. Böylece elinde ezber cümlesi değil, hocanın soru sorduğunda kullanabileceğin bir düşünme yolu olacak.`,
-        question: null,
-        options: null,
-        correctAnswer: null,
-        explanation: null,
-      },
-      {
-        type: "analogy",
-        title: "Gerçek hayat analojisi",
-        content: analogy,
-        question: null,
-        options: null,
-        correctAnswer: null,
-        explanation: null,
-      },
-      {
-        type: "core_explanation",
-        title: "Ana anlatım",
-        content: `${coreExplanation} ${topic.shortDescription} Bu başlığı çalışırken ilk soru şu olmalı: "Bu kavram hangi karışıklığı veya hangi ihtiyacı çözüyor?" Cevap genellikle tanımın kendisinden daha önemlidir. ${topic.whyImportant} Bu yüzden sınavda sadece kavram adını yazmak yetmez; kavramın ne işe yaradığını, hangi durumda kullanıldığını ve küçük bir örneğini birlikte kurman gerekir.`,
-        question: null,
-        options: null,
-        correctAnswer: null,
-        explanation: null,
-      },
-      {
-        type: "example",
-        title: "Örnek",
-        content: example,
-        question: null,
-        options: null,
-        correctAnswer: null,
-        explanation: null,
-      },
-      {
-        type: "formula",
-        title: "Kural varsa: neden böyle?",
-        content: `${ruleExplanation} ${examAngle}`,
-        question: null,
-        options: null,
-        correctAnswer: null,
-        explanation: null,
-      },
-      {
-        type: "mini_summary",
-        title: "Mini özet",
-        content: `Akılda kalacak kısa cümle şu: ${coreExplanation} Sınavda cevap verirken önce bu ana fikri söyle, sonra bir örnekle destekle. Kaynak: PDF sayfa ${sourcePages.join(", ")}.`,
-        question: null,
-        options: null,
-        correctAnswer: null,
-        explanation: null,
-      },
-      {
-        type: "checkpoint",
-        title: "Kontrol noktası",
-        content:
-          "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?",
-        question:
-          "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?",
-        options: null,
-        correctAnswer: null,
-        explanation:
-          "İstersen aynı modülü daha basit anlatabilir, örnek ekleyebilir veya sonraki modüle geçebilirsin.",
-      },
-    ],
+    lectureTranscript,
+    blocks: [],
   };
 }
 
-function buildLessonText({
+function buildLectureTranscript({
   title,
   courseName,
   topic,
@@ -1244,18 +1181,33 @@ function buildLessonText({
 }) {
   const importance = topic.whyImportant || `${title} sınavda tanım ve yorum sorusu olarak karşına çıkabilir.`;
   const source = `Kaynak: PDF sayfa ${sourcePages.join(", ")}.`;
+  const hook = buildLectureHook(title);
 
   return [
-    `Giriş\n${courseName} içinde ${title} başlığına çalışırken amacımız sadece tanımı ezberlemek değil. Bu modülde önce kavramın hangi problemi çözdüğünü, sonra PDF'teki anlatımın sınav cevabına nasıl dönüştürüleceğini kuracağız. İyi cevap, kavram adını söyleyip geçmez; "neden var, nasıl çalışır, hangi durumda kullanılır?" sorularına kısa ama mantıklı cevap verir.`,
-    `Kavramın mantığı\n${coreExplanation} ${topic.shortDescription} Bu noktada dikkat etmen gereken şey şu: PDF'teki teknik ifadeler bazen ham ve dağınık görünebilir, ama sınavda senden beklenen bunları düzenli bir düşünceye çevirmendir. ${title} için ana düşünce, sistemi daha anlaşılır veya daha yönetilebilir hale getiren bağlantıyı görmektir. Eğer kavramı bir cümlede anlatman gerekirse önce problemini söyle, sonra çözümünü ekle, en sonda küçük bir örnek ver.`,
-    `Günlük hayat analojisi\n${analogy} Analoji birebir teknik karşılık değildir; sadece akılda kalması için kullanılır. Buradaki amaç, soyut kavramı günlük bir düzene bağlamak. Böyle düşündüğünde PDF'teki başlıklar ayrı ayrı kelimeler gibi değil, aynı sistemin parçaları gibi görünmeye başlar.`,
-    `Teknik açıklama\n${ruleExplanation} Teknik tarafta "ne" kadar "nasıl" da önemlidir. Bir komut, yapı, dosya sistemi, bağlantı veya algoritma anlatılıyorsa önce girdiyi düşün: sistem ne alıyor? Sonra süreci düşün: bu bilgi hangi kurala göre işleniyor? Son olarak çıktıyı düşün: kullanıcı veya program ne sonuç görüyor? Bu üçlü mantık çoğu vize/final sorusunda cevap iskeleti olarak kullanılabilir.`,
-    `PDF'i okurken bunu ayırt et\nBu başlığı PDF'te gördüğünde ham kelimeleri tek tek ezberlemeye çalışma. Önce aynı anlama gelen ifadeleri grupla, sonra aralarındaki ilişkiyi kur. Örneğin bir sayfada komut, başka bir sayfada dosya yolu, başka bir yerde izin veya bağlantı geçiyorsa bunlar birbirinden kopuk ayrıntılar değildir; çoğu zaman aynı mekanizmanın farklı yüzleridir. UniKEY bu yüzden başlığı tek kelime olarak değil, sınavda anlatılabilir bir konu olarak düzenler.`,
-    `Somut örnek\n${example} Örneği cevabına eklemek seni ham tanımdan çıkarır. Mesela hoca "${title} ne işe yarar?" diye sorduğunda yalnızca tanım yazarsan cevap eksik kalabilir. Tanımdan sonra "örneğin..." diye başlayıp küçük bir senaryo kurduğunda hem kavramı anladığını hem de kullanabildiğini göstermiş olursun.`,
-    `Sınavda nasıl gelir?\n${examAngle} ${importance} Böyle bir soruda iyi cevap genellikle üç parçalıdır: önce kısa tanım, sonra mekanizma, en son örnek veya sonuç. Eğer soru yorum istiyorsa "bu yapı olmasaydı ne zorlaşırdı?" diye düşün. Bu soru seni doğrudan kavramın neden önemli olduğuna götürür.`,
-    `Mini özet\n${title} için akılda kalacak ana fikir şudur: kavramı bir isim olarak değil, bir problemi çözen düzen olarak gör. Tanımı bil, ama tanımı mutlaka amaç ve örnekle bağla. ${source}`,
-    `Kontrol noktası\nBuraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?`,
+    `${hook} Bunu anlamadan PDF'teki kelimeler birbirinden kopuk görünüyor; bir yerde komut geçiyor, başka bir yerde dosya yolu, başka bir yerde izin ya da bağlantı. Ama aslında hepsi aynı soruya bağlanıyor: sistem bir şeyi nasıl buluyor, nasıl ayırt ediyor ve doğru yere nasıl ulaştırıyor? ${courseName} içinde ${title} başlığını bu gözle okuyunca mesele ezberlenecek bir tanım olmaktan çıkıyor.`,
+    `Şimdi bunu yavaş yavaş kuralım. ${coreExplanation} ${topic.shortDescription} Burada tanım ilk durak değil, vardığımız sonuç gibi düşünülmeli. Önce ihtiyaç var: kullanıcı ya da program bir şeye erişmek istiyor. Sonra sistemin düzeni var: bu erişimin rastgele değil, belirli kurallara göre yapılması gerekiyor. En sonunda kavram devreye giriyor ve bu kuralları daha anlaşılır hale getiriyor.`,
+    `${analogy} Bunu böyle düşünmek işini kolaylaştırır, çünkü teknik konu ilk bakışta soğuk görünebilir. Oysa çoğu sistem kavramı günlük hayattaki düzen kurma ihtiyacına benzer. Bir şeyi bulmak, doğru yere yönlendirmek, aynı isimli şeyleri karıştırmamak veya kimin neye erişebileceğini belirlemek gibi çok insani problemler bilgisayarda daha katı kurallarla çözülür.`,
+    `${ruleExplanation} Diyelim ki PDF'teki örneklerde bir komut, dosya yolu veya sistem davranışı geçiyor. O satırı tek başına ezberlemek yerine kendine şunu sor: bu örnekte sistem neyi çözmeye çalışıyor? Girdi ne, karar hangi kurala göre veriliyor, sonuçta kullanıcı ne görüyor? ${example} Böyle cevap kurduğunda artık sadece PDF'teki cümleyi tekrar etmiyorsun; konuyu kendi cümlenle anlatmış oluyorsun.`,
+    `Bir de şunu fark etmeni isterim: hocaların PDF'lerinde ayrıntılar bazen peş peşe gelir ve hepsi eşit önemliymiş gibi durur. Oysa sınavda güçlü cevap veren öğrenci, ayrıntıların içinden ana ilişkiyi seçebilen öğrencidir. Bu yüzden ${title} çalışırken kendine sürekli "burada sistem hangi karışıklığı önlüyor?" diye sor. Bu soru seni hem tanıma hem örneğe hem de olası sınav yorumuna aynı anda götürür.`,
+    `Bu başlık sınavda karşına geldiğinde hoca çoğu zaman senden çok uzun bir metin beklemez. Ama tek cümlelik tanım da genelde yetmez. ${examAngle} ${importance} İyi cevap şuna benzer: önce problemin ne olduğunu söylersin, sonra sistemin bu problemi hangi mantıkla çözdüğünü anlatırsın, en sona da küçük bir örnek koyarsın. Bu üç parçayı kurduğunda cevap hem anlaşılır hem de sınav diliyle güçlü olur.`,
+    `Buradan aklında kalması gereken şey şu: ${title} bir başlık adı değil, sistemin bir problemi çözme biçimi. PDF'teki ayrıntıları bu ana fikre bağlarsan neyin neden anlatıldığını daha rahat görürsün. ${source} Buraya kadar kafana yatmayan bir yer var mı?`,
   ].join("\n\n");
+}
+
+function buildLectureHook(title: string) {
+  if (/dosya|file|directory|dizin|path|yol/i.test(title)) {
+    return "Bilgisayarında binlerce, hatta milyonlarca dosya var; peki terminal bir dosyayı ararken nereden başlayacağını nasıl biliyor hiç düşündün mü?";
+  }
+
+  if (/socket|tcp|port|ip|adres|bağlantı|network|ağ/i.test(title)) {
+    return "İki program birbirini hiç görmeden ağ üzerinden konuşabiliyor; asıl ilginç olan, verinin doğru makineye ve doğru uygulamaya şaşmadan ulaşması.";
+  }
+
+  if (/process|işlem|zamanlama|scheduling|queue|kuyruk/i.test(title)) {
+    return "Bilgisayar aynı anda onlarca iş yapıyor gibi görünür; ama işlemci çoğu anda kime sıra vereceğine karar vermek zorundadır.";
+  }
+
+  return "Bir konuyu ilk kez gördüğünde genelde en zor kısım tanımı ezberlemek değil, o kavrama neden ihtiyaç duyulduğunu fark etmektir.";
 }
 
 function buildExamAngle(title: string, sourcePages: number[]) {
@@ -1685,9 +1637,47 @@ function countWords(value: string) {
     .filter(Boolean).length;
 }
 
+function readLectureTranscript(module: LessonModule) {
+  return module.lectureTranscript || module.lessonText || "";
+}
+
 function hasLessonSignal(value: string, signals: string[]) {
   const normalized = value.toLocaleLowerCase("tr");
   return signals.some((signal) => normalized.includes(signal.toLocaleLowerCase("tr")));
+}
+
+function hasBannedLectureLabel(value: string) {
+  return /(^|\n)\s*(Giriş|Kavramın mantığı|Teknik açıklama|PDF'?i okurken|PDF’yi okurken|Mini özet|Neden önemli|Günlük hayat analojisi|Kontrol noktası)\s*:?\s*(\n|$)/i.test(
+    value,
+  );
+}
+
+function startsWithProblemHook(value: string) {
+  const firstSentence = splitSentences(value)[0] ?? "";
+  if (!firstSentence.trim()) return false;
+
+  return (
+    /\?/.test(firstSentence) ||
+    /\b(hiç düşündün mü|ilk bakışta|asıl ilginç olan|zor kısım|var;|görünür;|neden)\b/i.test(
+      firstSentence,
+    )
+  );
+}
+
+function isNaturalLectureTranscript(value: string) {
+  const normalized = value.toLocaleLowerCase("tr");
+  const banned = hasBannedLectureLabel(value);
+  const conversationalSignals = [
+    "şimdi",
+    "düşün",
+    "diyelim",
+    "bak",
+    "burada",
+    "aklında",
+    "karşına",
+  ].filter((signal) => normalized.includes(signal)).length;
+
+  return !banned && conversationalSignals >= 3;
 }
 
 function hasRepeatedSentences(value: string) {

@@ -78,8 +78,8 @@ type AnalysisDebug = {
   missingTopicCount: number;
   missingSourcePageCount: number;
   lessonModuleCount?: number;
-  lessonBlockCount?: number;
-  missingCheckpointCount?: number;
+  shortLectureTranscriptCount?: number;
+  bannedLectureLabelCount?: number;
   missingModuleSourcePageCount?: number;
   missingQuizModuleLinkCount?: number;
   lessonQualityScore?: number;
@@ -1514,8 +1514,8 @@ function AiQualityDebugPanel({
           <span>Eksik topic: {debug.missingTopicCount}</span>
           <span>Eksik sayfa: {debug.missingSourcePageCount}</span>
           <span>Modül: {debug.lessonModuleCount ?? 0}</span>
-          <span>Blok: {debug.lessonBlockCount ?? 0}</span>
-          <span>Checkpoint eksik: {debug.missingCheckpointCount ?? 0}</span>
+          <span>Kısa transcript: {debug.shortLectureTranscriptCount ?? 0}</span>
+          <span>Yasaklı etiket: {debug.bannedLectureLabelCount ?? 0}</span>
           <span>Modül sayfası eksik: {debug.missingModuleSourcePageCount ?? 0}</span>
           <span>Quiz modül linki eksik: {debug.missingQuizModuleLinkCount ?? 0}</span>
           <span>Lesson skoru: {debug.lessonQualityScore ?? debug.qualityScore}</span>
@@ -1766,19 +1766,15 @@ function LessonEnginePanel({
 }
 
 function LessonNarrativeCard({ module }: { module: LessonModule }) {
-  const blockMap = mapLessonBlocks(module);
-  const narrative = module.lessonText?.trim() || buildLessonNarrativeFromBlocks(module);
-  const checkpointQuestion =
-    blockMap.checkpoint?.question ||
-    "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?";
+  const narrative =
+    module.lectureTranscript?.trim() ||
+    module.lessonText?.trim() ||
+    buildLessonNarrativeFromBlocks(module);
 
   return (
     <section className="lesson-narrative-card">
       <h3>{module.title}</h3>
       <p className="lesson-text">{stripRepeatedSectionLabel(narrative, module.title)}</p>
-      <div className="lesson-single-checkpoint">
-        <strong>{checkpointQuestion}</strong>
-      </div>
     </section>
   );
 }
@@ -1797,15 +1793,16 @@ function buildLessonNarrativeFromBlocks(module: LessonModule) {
   const blockMap = mapLessonBlocks(module);
 
   return [
-    ["Bu modülde ne öğreneceğiz?", blockMap.intro?.content || module.learningGoals.join(" ")],
-    ["Ana anlatım", blockMap.core_explanation?.content],
-    ["Günlük hayat analojisi", blockMap.analogy?.content],
-    ["Örnek", blockMap.example?.content],
-    ["Neden önemli?", blockMap.formula?.content],
-    ["Mini özet", blockMap.mini_summary?.content],
+    blockMap.intro?.content || module.learningGoals.join(" "),
+    blockMap.core_explanation?.content,
+    blockMap.analogy?.content,
+    blockMap.example?.content,
+    blockMap.formula?.content,
+    blockMap.mini_summary?.content,
+    "Buraya kadar kafana yatmayan bir yer var mı?",
   ]
-    .filter(([, content]) => content?.trim())
-    .map(([title, content]) => `${title}\n${stripRepeatedSectionLabel(content ?? "", title ?? "")}`)
+    .filter((content) => content?.trim())
+    .map((content) => stripRepeatedSectionLabel(content ?? "", ""))
     .join("\n\n");
 }
 
@@ -2278,9 +2275,12 @@ function lessonDifficultyLabel(difficulty: AiLesson["difficulty"]) {
 function stripRepeatedSectionLabel(content: string, title: string) {
   const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const genericLabels =
-    "Ana anlatım|Günlük hayat analojisi|Gerçek hayat analojisi|Örnek|Neden önemli|Mini özet|Kontrol noktası|Bu modülde öğreneceğiz";
+    "Giriş|Kavramın mantığı|Teknik açıklama|PDF'?i okurken|PDF’yi okurken|Ana anlatım|Günlük hayat analojisi|Gerçek hayat analojisi|Örnek|Neden önemli|Mini özet|Kontrol noktası|Bu modülde öğreneceğiz";
+  const labelAlternatives = escapedTitle
+    ? `${escapedTitle}|${genericLabels}`
+    : genericLabels;
   const repeatedLabelPattern = new RegExp(
-    `^\\s*(?:${escapedTitle}|${genericLabels})\\s*[:：-]\\s*`,
+    `^\\s*(?:${labelAlternatives})\\s*[:：-]\\s*`,
     "i",
   );
 
