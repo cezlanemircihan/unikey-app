@@ -9,6 +9,8 @@ import {
   buildQuizResultAnalysis,
   buildWeakTopicMiniQuiz,
   type AiLesson,
+  type ConceptGraphNode,
+  type DocumentAnalysis,
   type LessonBlockType,
   type LessonModule,
   type OutputQualityReport,
@@ -44,6 +46,8 @@ type DocumentItem = {
   structuredSummary?: StudySummary;
   structuredQuiz?: StructuredQuizQuestion[];
   lesson?: AiLesson;
+  documentAnalysis?: DocumentAnalysis;
+  conceptGraph?: ConceptGraphNode[];
   quality?: OutputQualityReport;
   debug?: AnalysisDebug;
 };
@@ -59,6 +63,8 @@ type AnalyzeResponse = {
   structuredSummary?: StudySummary;
   structuredQuiz?: StructuredQuizQuestion[];
   lesson?: AiLesson;
+  documentAnalysis?: DocumentAnalysis;
+  conceptGraph?: ConceptGraphNode[];
   quality?: OutputQualityReport;
   debug?: AnalysisDebug;
   error?: string;
@@ -78,7 +84,8 @@ type AnalysisDebug = {
   missingTopicCount: number;
   missingSourcePageCount: number;
   lessonModuleCount?: number;
-  shortLectureTranscriptCount?: number;
+  generatedLectureCount?: number;
+  pendingLectureCount?: number;
   bannedLectureLabelCount?: number;
   missingModuleSourcePageCount?: number;
   missingQuizModuleLinkCount?: number;
@@ -89,6 +96,16 @@ type AnalysisDebug = {
   aiFailureReason?: string;
   qualityScore: number;
   warnings: string[];
+};
+
+type ModuleTeachResponse = {
+  moduleId: string;
+  lecture: string;
+  checkpointQuestion: string;
+  readyToContinueLabel: string;
+  engine: "ai" | "local";
+  cached?: boolean;
+  error?: string;
 };
 
 type PdfTextItem = {
@@ -157,6 +174,8 @@ export default function Home() {
   const [moduleAssistMode, setModuleAssistMode] = useState<
     "repeat" | "simple" | "example" | null
   >(null);
+  const [loadingModuleId, setLoadingModuleId] = useState<string | null>(null);
+  const [moduleLectureError, setModuleLectureError] = useState("");
 
   const currentDocument = documents[documents.length - 1];
   const baseQuiz = useMemo(
@@ -174,6 +193,16 @@ export default function Home() {
       ? keywords.slice(0, 8).map((keyword) => humanizeTopic(keyword))
       : fallbackTopics;
   }, [currentDocument]);
+
+  useEffect(() => {
+    if (screen !== "course-ready" || !currentDocument?.lesson) return;
+    const activeModule = currentDocument.lesson.modules[activeModuleIndex];
+    if (!activeModule || activeModule.lectureTranscript?.trim()) return;
+
+    void loadModuleLecture("default", false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, currentDocument?.id, activeModuleIndex]);
+
   function submitRegister() {
     if (
       !userEmail.trim() ||
@@ -272,6 +301,8 @@ export default function Home() {
       setActiveModuleIndex(0);
       setCompletedModuleIds([]);
       setModuleAssistMode(null);
+      setLoadingModuleId(null);
+      setModuleLectureError("");
       setScreen("course-ready");
     } catch (error) {
       setErrorMessage(formatAnalysisError(error));
@@ -315,6 +346,8 @@ export default function Home() {
       setActiveModuleIndex(0);
       setCompletedModuleIds([]);
       setModuleAssistMode(null);
+      setLoadingModuleId(null);
+      setModuleLectureError("");
       setScreen("course-ready");
     } catch (error) {
       setErrorMessage(formatAnalysisError(error));
@@ -339,10 +372,78 @@ export default function Home() {
         structuredSummary: payload.structuredSummary,
         structuredQuiz: payload.structuredQuiz,
         lesson: payload.lesson,
+        documentAnalysis: payload.documentAnalysis,
+        conceptGraph: payload.conceptGraph,
         quality: payload.quality,
         debug: payload.debug,
       },
     ]);
+  }
+
+  async function loadModuleLecture(
+    mode: "default" | "repeat" | "simple" | "example" = "default",
+    forceRefresh = false,
+  ) {
+    const document = currentDocument;
+    const lesson = document?.lesson;
+    const activeModule = lesson?.modules[activeModuleIndex];
+
+    if (!document || !lesson || !activeModule) return;
+    if (!forceRefresh && activeModule.lectureTranscript?.trim()) return;
+
+    setLoadingModuleId(activeModule.id);
+    setModuleLectureError("");
+
+    try {
+      const response = await fetch("/api/modules/teach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          courseName,
+          documentName: document.name,
+          text: document.text,
+          lesson,
+          moduleId: activeModule.id,
+          mode,
+          completedModuleIds,
+        }),
+      });
+      const payload = await readJsonResponse<ModuleTeachResponse>(response);
+
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || "Modül anlatımı hazırlanamadı.");
+      }
+
+      setDocuments((items) =>
+        items.map((item) => {
+          if (item.id !== document.id || !item.lesson) return item;
+
+          return {
+            ...item,
+            lesson: {
+              ...item.lesson,
+              modules: item.lesson.modules.map((module) =>
+                module.id === payload.moduleId
+                  ? {
+                      ...module,
+                      lectureTranscript: payload.lecture,
+                      lessonText: payload.lecture,
+                    }
+                  : module,
+              ),
+            },
+          };
+        }),
+      );
+    } catch (error) {
+      setModuleLectureError(
+        error instanceof Error
+          ? error.message
+          : "Modül anlatımı hazırlanırken beklenmeyen bir sorun oluştu.",
+      );
+    } finally {
+      setLoadingModuleId(null);
+    }
   }
 
   async function askQuestion() {
@@ -359,6 +460,7 @@ export default function Home() {
         body: JSON.stringify({
           text: currentDocument.text,
           question,
+          activeModule: currentDocument.lesson?.modules[activeModuleIndex],
         }),
       });
       const payload = await readJsonResponse<{
@@ -398,7 +500,16 @@ export default function Home() {
     setActiveModuleIndex(0);
     setCompletedModuleIds([]);
     setModuleAssistMode(null);
+    setLoadingModuleId(null);
+    setModuleLectureError("");
     setScreen("document-upload");
+  }
+
+  function requestModuleAssist(mode: "repeat" | "simple" | "example" | null) {
+    setModuleAssistMode(mode);
+    if (mode) {
+      void loadModuleLecture(mode, true);
+    }
   }
 
   function completeActiveModule() {
@@ -423,6 +534,7 @@ export default function Home() {
     if (moduleIndex >= 0) {
       setActiveModuleIndex(moduleIndex);
       setModuleAssistMode("repeat");
+      setModuleLectureError("");
       setScreen("course-ready");
     }
   }
@@ -533,10 +645,12 @@ export default function Home() {
               activeModuleIndex={activeModuleIndex}
               completedModuleIds={completedModuleIds}
               moduleAssistMode={moduleAssistMode}
+              loadingModuleId={loadingModuleId}
+              moduleLectureError={moduleLectureError}
               summary={currentDocument?.summary}
               documentsCount={documents.length}
               onStudy={() => setScreen("study-chat")}
-              onModuleAssist={setModuleAssistMode}
+              onModuleAssist={requestModuleAssist}
               onCompleteModule={completeActiveModule}
               onRestartModule={restartModule}
               onQuiz={(scope) => {
@@ -1514,7 +1628,8 @@ function AiQualityDebugPanel({
           <span>Eksik topic: {debug.missingTopicCount}</span>
           <span>Eksik sayfa: {debug.missingSourcePageCount}</span>
           <span>Modül: {debug.lessonModuleCount ?? 0}</span>
-          <span>Kısa transcript: {debug.shortLectureTranscriptCount ?? 0}</span>
+          <span>Lecture hazır: {debug.generatedLectureCount ?? 0}</span>
+          <span>Lecture bekleyen: {debug.pendingLectureCount ?? 0}</span>
           <span>Yasaklı etiket: {debug.bannedLectureLabelCount ?? 0}</span>
           <span>Modül sayfası eksik: {debug.missingModuleSourcePageCount ?? 0}</span>
           <span>Quiz modül linki eksik: {debug.missingQuizModuleLinkCount ?? 0}</span>
@@ -1548,6 +1663,8 @@ function CourseReadyStep({
   activeModuleIndex,
   completedModuleIds,
   moduleAssistMode,
+  loadingModuleId,
+  moduleLectureError,
   summary,
   documentsCount,
   onStudy,
@@ -1563,6 +1680,8 @@ function CourseReadyStep({
   activeModuleIndex: number;
   completedModuleIds: string[];
   moduleAssistMode: "repeat" | "simple" | "example" | null;
+  loadingModuleId: string | null;
+  moduleLectureError: string;
   summary?: string;
   documentsCount: number;
   onStudy: () => void;
@@ -1604,6 +1723,8 @@ function CourseReadyStep({
           activeModuleIndex={activeModuleIndex}
           completedModuleIds={completedModuleIds}
           moduleAssistMode={moduleAssistMode}
+          loadingModuleId={loadingModuleId}
+          moduleLectureError={moduleLectureError}
           onModuleAssist={onModuleAssist}
           onCompleteModule={onCompleteModule}
           onRestartModule={onRestartModule}
@@ -1673,6 +1794,8 @@ function LessonEnginePanel({
   activeModuleIndex,
   completedModuleIds,
   moduleAssistMode,
+  loadingModuleId,
+  moduleLectureError,
   onModuleAssist,
   onCompleteModule,
   onRestartModule,
@@ -1681,6 +1804,8 @@ function LessonEnginePanel({
   activeModuleIndex: number;
   completedModuleIds: string[];
   moduleAssistMode: "repeat" | "simple" | "example" | null;
+  loadingModuleId: string | null;
+  moduleLectureError: string;
   onModuleAssist: (mode: "repeat" | "simple" | "example" | null) => void;
   onCompleteModule: () => void;
   onRestartModule: (moduleId: string) => void;
@@ -1690,6 +1815,8 @@ function LessonEnginePanel({
     completedModuleIds.includes(module.id),
   ).length;
   const isLastModule = activeModuleIndex >= lesson.modules.length - 1;
+  const activeModuleIsLoading = loadingModuleId === activeModule?.id;
+  const activeModuleHasLecture = Boolean(activeModule?.lectureTranscript?.trim());
 
   return (
     <article className="lesson-engine-card">
@@ -1701,6 +1828,7 @@ function LessonEnginePanel({
             {lesson.modules.length} modül · yaklaşık {lesson.estimatedTotalMinutes} dakika ·{" "}
             {lessonDifficultyLabel(lesson.difficulty)}
           </p>
+          <p>{lesson.moduleCountReason}</p>
         </div>
         <strong>
           {completedCount}/{lesson.modules.length} modül tamamlandı
@@ -1745,12 +1873,29 @@ function LessonEnginePanel({
               <p>{assistModeText(moduleAssistMode, activeModule)}</p>
             </div>
           )}
-          <LessonNarrativeCard module={activeModule} />
+          {moduleLectureError && (
+            <div className="lesson-assist-note">
+              <strong>Modül hazırlanamadı</strong>
+              <p>{moduleLectureError}</p>
+            </div>
+          )}
+          {activeModuleIsLoading && !activeModuleHasLecture ? (
+            <div className="lesson-loading-card">
+              <strong>Modül hazırlanıyor</strong>
+              <p>UniKEY sadece bu modülün kaynak sayfalarını ve önceki kısa bağlamı kullanarak anlatımı hazırlıyor.</p>
+            </div>
+          ) : (
+            <LessonNarrativeCard module={activeModule} />
+          )}
           <div className="lesson-checkpoint-actions">
             <button onClick={() => onModuleAssist("repeat")}>Tekrar anlat</button>
             <button onClick={() => onModuleAssist("simple")}>Daha basit anlat</button>
             <button onClick={() => onModuleAssist("example")}>Örnek ver</button>
-            <button className="primary-button" onClick={onCompleteModule}>
+            <button
+              className="primary-button"
+              onClick={onCompleteModule}
+              disabled={activeModuleIsLoading || !activeModuleHasLecture}
+            >
               {isLastModule ? "Anladım, dersi tamamla" : "Anladım, sonraki modüle geç"}
             </button>
           </div>
@@ -1799,7 +1944,7 @@ function buildLessonNarrativeFromBlocks(module: LessonModule) {
     blockMap.example?.content,
     blockMap.formula?.content,
     blockMap.mini_summary?.content,
-    "Buraya kadar kafana yatmayan bir yer var mı?",
+    "Buraya kadar kafana yatmayan veya tekrar etmemi istediğin bir yer var mı?",
   ]
     .filter((content) => content?.trim())
     .map((content) => stripRepeatedSectionLabel(content ?? "", ""))

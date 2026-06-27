@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import {
   attachQuizToLesson,
-  buildLesson,
-  buildQuiz,
+    buildLesson,
+    buildConceptGraph,
+    buildDocumentAnalysis,
+    buildQuiz,
   buildSummary,
   buildTopics,
   buildStructuredQuiz,
@@ -39,6 +41,10 @@ export async function POST(request: Request) {
     const localStructuredSummary = buildStructuredSummary(text, courseName);
     const localStructuredQuiz = buildStructuredQuiz(text, courseName);
     const localLesson = buildLesson(text, courseName);
+    const localDocumentAnalysis =
+      localLesson.documentAnalysis ?? buildDocumentAnalysis(text, courseName);
+    const localConceptGraph =
+      localLesson.conceptGraph ?? buildConceptGraph(localTopics);
     const localPack = {
       summary: buildSummary(text, courseName),
       keywords: localTopics.map((topic) => topic.title),
@@ -47,6 +53,8 @@ export async function POST(request: Request) {
       structuredSummary: localStructuredSummary,
       structuredQuiz: localStructuredQuiz,
       lesson: localLesson,
+      documentAnalysis: localDocumentAnalysis,
+      conceptGraph: localConceptGraph,
     };
     const aiResult = await generateAiStudyPackWithDebug({
       courseName,
@@ -62,7 +70,19 @@ export async function POST(request: Request) {
       structuredQuiz: aiPack?.structuredQuiz?.length
         ? aiPack.structuredQuiz
         : localPack.structuredQuiz,
-      lesson: aiPack?.lesson?.modules.length ? aiPack.lesson : localPack.lesson,
+      lesson: aiPack?.lesson?.modules.length
+        ? {
+            ...aiPack.lesson,
+            documentAnalysis: aiPack.documentAnalysis ?? localPack.documentAnalysis,
+            conceptGraph: aiPack.conceptGraph?.length
+              ? aiPack.conceptGraph
+              : localPack.conceptGraph,
+          }
+        : localPack.lesson,
+      documentAnalysis: aiPack?.documentAnalysis ?? localPack.documentAnalysis,
+      conceptGraph: aiPack?.conceptGraph?.length
+        ? aiPack.conceptGraph
+        : localPack.conceptGraph,
     };
     pack.quiz = attachQuizToLesson(pack.quiz, pack.lesson);
 
@@ -90,11 +110,11 @@ export async function POST(request: Request) {
       (question) => !question.moduleId,
     ).length;
     const lessonModuleCount = pack.lesson.modules.length;
-    const shortLectureTranscriptCount = pack.lesson.modules.filter(
-      (module) =>
-        (module.lectureTranscript || module.lessonText || "")
-          .split(/\s+/)
-          .filter(Boolean).length < 500,
+    const generatedLectureCount = pack.lesson.modules.filter(
+      (module) => Boolean((module.lectureTranscript || module.lessonText || "").trim()),
+    ).length;
+    const pendingLectureCount = pack.lesson.modules.filter(
+      (module) => !(module.lectureTranscript || module.lessonText || "").trim(),
     ).length;
     const bannedLectureLabelCount = pack.lesson.modules.filter((module) =>
       /(^|\n)\s*(Giriş|Kavramın mantığı|Teknik açıklama|PDF'?i okurken|PDF’yi okurken|Mini özet|Neden önemli|Günlük hayat analojisi|Kontrol noktası)\s*:?\s*(\n|$)/i.test(
@@ -118,7 +138,8 @@ export async function POST(request: Request) {
       missingTopicCount,
       missingSourcePageCount,
       lessonModuleCount,
-      shortLectureTranscriptCount,
+      generatedLectureCount,
+      pendingLectureCount,
       bannedLectureLabelCount,
       missingModuleSourcePageCount,
       missingQuizModuleLinkCount,
@@ -142,6 +163,8 @@ export async function POST(request: Request) {
       structuredSummary: pack.structuredSummary,
       structuredQuiz: pack.structuredQuiz,
       lesson: pack.lesson,
+      documentAnalysis: pack.documentAnalysis,
+      conceptGraph: pack.conceptGraph,
       engine: aiPack ? "ai" : "local",
       quality,
       debug,

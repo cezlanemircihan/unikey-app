@@ -1,8 +1,11 @@
 import {
   formatStructuredSummary,
   type AiLesson,
+  type ConceptGraphNode,
+  type DocumentAnalysis,
   type LessonBlockType,
   type LessonDifficulty,
+  type LessonModule,
   type LessonModuleStatus,
   type QuizDifficulty,
   type QuizQuestion,
@@ -19,6 +22,8 @@ type StudyPack = {
   structuredSummary?: StudySummary;
   structuredQuiz?: StructuredQuizQuestion[];
   lesson?: AiLesson;
+  documentAnalysis?: DocumentAnalysis;
+  conceptGraph?: ConceptGraphNode[];
 };
 
 export type AiStudyDebug = {
@@ -46,6 +51,8 @@ type RawTopic = Partial<StudyTopic>;
 type RawSummary = Partial<StudySummary>;
 type RawQuizQuestion = Partial<StructuredQuizQuestion> & Partial<QuizQuestion>;
 type RawLesson = Partial<AiLesson>;
+type RawDocumentAnalysis = Partial<DocumentAnalysis>;
+type RawConceptGraphNode = Partial<ConceptGraphNode>;
 
 const openAiEndpoint = "https://api.openai.com/v1/responses";
 const defaultModel = "gpt-4.1";
@@ -89,15 +96,10 @@ export async function generateAiStudyPackWithDebug({
   }
 
   const prompt = `
-Sen ÜniKEY'in AI Lesson Engine'isin.
-Görevin PDF özeti, ders notu veya başlık başlık açıklama yazmak değil.
-Kendini üniversitede ofis saatindeki bir öğretim üyesi gibi düşün:
-- Karşında dersi kaçırmış bir öğrenci var.
-- Elinde sadece hocanın PDF'i var.
-- PDF'teki bilgileri kullanarak öğrenciye konuyu gerçekten anlatıyorsun.
-- Metin okunmak için hazırlanmış markdown notu gibi değil, konuşulmak için yazılmış ders anlatımı gibi akmalı.
-
-PDF hangi dilde olursa olsun öğrenciye her zaman doğal Türkçe anlat. Teknik terimler gerekiyorsa korunabilir ama cümle Türkçe olmalı.
+Sen ÜniKEY'in çok aşamalı AI Tutor analiz katmanısın.
+Bu aşamada ders anlatımı üretmeyeceksin.
+Görevin PDF'i anlamak, kavramları ilişkilendirmek ve ayrı ayrı öğretilecek modül planını çıkarmak.
+Module lecture, quiz ve yanlış analizi sonraki ajanlarda üretilecek.
 
 Ders: ${courseName}
 PDF adı: ${documentName}
@@ -108,21 +110,48 @@ ${limitText(text)}
 Yalnızca parse edilebilir JSON döndür. Markdown, açıklama, kod bloğu veya JSON dışı metin yazma.
 JSON şeması tam olarak şu yapıda olsun:
 {
+  "documentAnalysis": {
+    "documentTitle": "PDF'in doğal Türkçe başlığı",
+    "mainSubject": "PDF'in ana konusu",
+    "coreProblem": "PDF'in çözmeye çalıştığı ana problem",
+    "importantConcepts": ["Önemli kavramlar"],
+    "irrelevantOrLowPriorityParts": ["Sınav açısından düşük öncelikli kısımlar"],
+    "examRelevantParts": ["Sınavda sorulabilecek kısımlar"],
+    "sourcePageMap": [
+      {
+        "page": 1,
+        "concepts": ["Bu sayfada geçen kavramlar"]
+      }
+    ]
+  },
+  "conceptGraph": [
+    {
+      "concept": "Kavram adı",
+      "dependsOn": ["Ön koşul kavramlar"],
+      "relatedTo": ["İlgili kavramlar"],
+      "whyItMatters": "Bu kavram neden önemli?"
+    }
+  ],
   "lesson": {
-    "lessonTitle": "PDF'ten çıkarılan Türkçe AI ders başlığı",
+    "lessonTitle": "PDF'ten çıkarılan Türkçe ders planı başlığı",
     "courseTitle": "${courseName}",
+    "moduleCountReason": "Neden bu sayıda modül seçildi?",
     "estimatedTotalMinutes": 45,
     "difficulty": "beginner | intermediate | advanced",
     "modules": [
       {
         "id": "modul-1-kisa-id",
         "title": "Öğretilebilir Türkçe modül başlığı",
+        "goal": "Bu modülün öğrenme hedefi",
+        "whyThisModuleExists": "Bu modül plana neden dahil edildi?",
+        "dependsOn": ["Bu modül için önce bilinmesi gereken modüller/kavramlar"],
+        "examAngle": "Bu modül sınavda nasıl sorulabilir?",
         "estimatedMinutes": 8,
         "learningGoals": ["Bu modül sonunda öğrenci neyi anlayacak?"],
         "prerequisites": ["Gerekli ön bilgi yoksa boş bırakma, kısa yaz"],
         "sourcePages": [1],
         "status": "active | locked | completed",
-        "lectureTranscript": "Ofis saatinde hocanın öğrenciye konuşarak anlattığı tek parça doğal Türkçe ders transcript'i",
+        "lectureTranscript": "",
         "blocks": []
       }
     ],
@@ -173,8 +202,8 @@ JSON şeması tam olarak şu yapıda olsun:
 }
 
 Zorunlu kurallar:
-- Bütün anlatım Türkçe olacak. PDF İngilizce olsa bile Türkçe anlat.
-- Teknik terimler gerektiğinde korunabilir: socket, TCP, working directory, NFS gibi. Ama cümle Türkçe olmalı.
+- Bütün çıktı Türkçe olacak. PDF İngilizce olsa bile analiz ve plan Türkçe olacak.
+- Teknik terimler gerektiğinde korunabilir: socket, TCP, working directory, NFS gibi.
 - "File Systems", "Unix File", "Other", "Command", "Chapter Fifteen", "Konusu", "Each Line" gibi ham veya yapay başlıklar üretme.
 - Anahtar kelime çıkarma; konu çıkar. Örnek: "UNIX Dosya Sistemi Temelleri", "Working Directory ve Path Mantığı", "UNIX'te Everything is a File Yaklaşımı".
 - PDF'ten ham satır, kod bloğu, shell script, "[Sayfa 1] Chapter..." gibi metinleri cevap olarak kopyalama.
@@ -189,21 +218,13 @@ Zorunlu kurallar:
 - Quiz açıklaması öğrencinin yanlışını düzeltecek kadar öğretici olsun.
 - sourcePages ve sourcePage sadece sayı olsun. Sayfa bilinmiyorsa 1 yaz.
 - PDF'te olmayan bilgiyi uydurma.
-- Ana deneyim summary değil lectureTranscript olacak; lesson.modules içindeki her module için lectureTranscript alanını mutlaka doldur.
-- lectureTranscript 700-1200 kelime arası tek parça konuşma metni olsun. 500 kelimeden kısa üretme.
-- lectureTranscript içinde markdown başlığı, madde listesi, bölüm etiketi veya ders notu formatı kullanma.
-- Şu ifadeleri ASLA lectureTranscript içinde üretme: "Giriş", "Kavramın mantığı", "Teknik açıklama", "PDF'yi okurken", "PDF’i okurken", "Mini özet", "Neden önemli", "Günlük hayat analojisi", "Kontrol noktası".
-- İlk paragraf tanım vermesin. Önce merak uyandıran bir problemle başlasın.
-- İlk cümle "X nedir" veya "X, ..." gibi tanım cümlesi olmasın.
-- Önce problemi anlat, sonra neden böyle bir çözüme ihtiyaç olduğunu anlat, sonra kavrama geç.
-- Analoji gerekiyorsa doğal konuşmanın içinde gelsin; "şimdi analoji kısmına geçelim" deme.
-- Örnek gerekiyorsa doğal konuşmanın içinde gelsin; "örnek bölümü" gibi başlık atma.
-- Sınav yorumu doğal konuşmanın içinde gelsin; "sınavda şöyle gelebilir" diyebilirsin ama başlık atma.
-- En son cümle tam olarak şuna yakın bitsin: "Buraya kadar kafana yatmayan bir yer var mı?"
-- blocks alanı eski uyumluluk için kalsın ama boş array olabilir. Kullanıcıya gösterilecek ana metin blocks değil lectureTranscript'tir.
+- Bu aşamada lectureTranscript üretme; boş string dön.
+- Modül sayısı 4-10 arasında olsun. Rastgele seçme; moduleCountReason ile gerekçelendir.
+- Her modül ayrı bir öğrenme basamağı olsun. Aynı başlığın yeniden adlandırılmış hali gibi modül üretme.
+- Her modülün sourcePages alanı dolu olsun.
 - İlk module status "active", diğerleri "locked" olsun.
 - Quiz sorularında mümkünse moduleId alanını ilgili modül id'siyle eşleştir.
-- Quiz soruları lectureTranscript içindeki gerçek anlatıma dayansın; "Bu konu neden önemlidir?" gibi genel kalıp soru yazma.
+- Quiz bu aşamada kabaca üretilebilir ama asıl kalite modül tamamlandıktan sonra değerlendirilecek.
 `;
 
   const output = await safeCallOpenAi(prompt);
@@ -263,6 +284,93 @@ Sonuna mümkünse "Kaynak: PDF sayfa X" satırı ekle.
   return safeCallOpenAi(prompt);
 }
 
+export async function generateAiModuleLecture({
+  courseName,
+  documentName,
+  text,
+  lesson,
+  module,
+  previousModuleSummaries,
+  mode = "default",
+}: {
+  courseName: string;
+  documentName: string;
+  text: string;
+  lesson: AiLesson;
+  module: LessonModule;
+  previousModuleSummaries: string[];
+  mode?: "default" | "repeat" | "simple" | "example";
+}) {
+  if (!hasOpenAiKey()) return null;
+
+  const modeInstruction =
+    mode === "simple"
+      ? "Bu anlatımı daha basit cümlelerle yeniden kur. Kavramı küçültmeden sadeleştir."
+      : mode === "example"
+        ? "Bu anlatımda PDF bağlamından daha belirgin ve somut bir örnek kullan."
+        : mode === "repeat"
+          ? "Aynı modülü farklı cümlelerle, daha toparlanmış şekilde yeniden anlat."
+          : "Bu modülü ilk kez anlat.";
+
+  const prompt = `
+Sen ÜniKEY'in Module Teacher ajanısın.
+Bu aşamada yalnızca aktif modülü anlatacaksın.
+Tüm ders planını anlatma. Diğer modüllerin lecture metnini üretme.
+
+Ton:
+- Ciddi, net, öğretici ve sınav odaklı.
+- Aşırı samimi ifadeler yok.
+- Robotik liste dili yok.
+- "hoş geldin", "harika", "çayını al" gibi ifadeler yok.
+
+Ders: ${courseName}
+PDF adı: ${documentName}
+Ders planı: ${lesson.lessonTitle}
+Aktif modül:
+${JSON.stringify({
+  id: module.id,
+  title: module.title,
+  goal: module.goal,
+  whyThisModuleExists: module.whyThisModuleExists,
+  dependsOn: module.dependsOn,
+  sourcePages: module.sourcePages,
+  examAngle: module.examAngle,
+})}
+
+Önceki modüllerin kısa bağlamı:
+${previousModuleSummaries.join("\n") || "Önceki modül yok."}
+
+İlgili PDF metni:
+${limitText(text, 9000)}
+
+Mod:
+${modeInstruction}
+
+Yalnızca parse edilebilir JSON döndür:
+{
+  "moduleId": "${module.id}",
+  "lecture": "600-1000 kelimelik tek parça doğal Türkçe ders anlatımı",
+  "checkpointQuestion": "Buraya kadar kafana yatmayan veya tekrar etmemi istediğin bir yer var mı?",
+  "readyToContinueLabel": "Anladım, sonraki modüle geç"
+}
+
+Kurallar:
+- lecture içinde başlık, markdown, madde listesi veya bölüm etiketi kullanma.
+- Şu ifadeleri üretme: "Giriş", "Kavramın mantığı", "Teknik açıklama", "PDF'yi okurken", "Mini özet", "Kontrol noktası".
+- Şu kalıp cümleleri ve benzerlerini üretme: "tanım ilk durak değil", "PDF kelimeleri kopuk görünür", "hoca uzun metin beklemez", "önce problem sonra mantık sonra örnek".
+- İlk cümle aktif modülün kendi problemine özel olsun. Genel motivasyon cümlesiyle başlama.
+- PDF bağlamından en az bir somut örnek kullan.
+- Sınavda nasıl sorulabileceğini doğal biçimde anlat.
+- Modül dışına çıkma. Sadece sourcePages ve aktif modül bağlamını kullan.
+- Son cümle tam olarak şu olsun: "Buraya kadar kafana yatmayan veya tekrar etmemi istediğin bir yer var mı?"
+`;
+
+  const output = await safeCallOpenAi(prompt);
+  if (!output) return null;
+
+  return parseModuleLecture(output, module.id);
+}
+
 function hasOpenAiKey() {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
 }
@@ -316,12 +424,16 @@ function parseStudyPack(output: string): StudyPack | null {
 
   try {
     const parsed = JSON.parse(jsonText) as {
+      documentAnalysis?: RawDocumentAnalysis;
+      conceptGraph?: RawConceptGraphNode[];
       lesson?: RawLesson;
       topics?: RawTopic[];
       summary?: RawSummary | string;
       keywords?: string[];
       quiz?: RawQuizQuestion[];
     };
+    const documentAnalysis = normalizeDocumentAnalysis(parsed.documentAnalysis);
+    const conceptGraph = normalizeConceptGraph(parsed.conceptGraph);
     const lesson = normalizeLesson(parsed.lesson);
     const topics = normalizeTopics(parsed.topics);
     const structuredSummary =
@@ -338,7 +450,15 @@ function parseStudyPack(output: string): StudyPack | null {
         topics,
         structuredSummary,
         structuredQuiz,
-        lesson: lesson ?? undefined,
+        lesson: lesson
+          ? {
+              ...lesson,
+              documentAnalysis: documentAnalysis ?? lesson.documentAnalysis,
+              conceptGraph: conceptGraph.length ? conceptGraph : lesson.conceptGraph,
+            }
+          : undefined,
+        documentAnalysis: documentAnalysis ?? undefined,
+        conceptGraph,
       };
     }
 
@@ -361,10 +481,44 @@ function parseStudyPack(output: string): StudyPack | null {
         keywords: parsed.keywords.filter((keyword) => typeof keyword === "string").map(sanitizeText),
         quiz: legacyQuiz,
         lesson: lesson ?? undefined,
+        documentAnalysis: documentAnalysis ?? undefined,
+        conceptGraph,
       };
     }
 
     return null;
+  } catch {
+    return null;
+  }
+}
+
+function parseModuleLecture(output: string, expectedModuleId: string) {
+  const jsonText = output
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
+  try {
+    const parsed = JSON.parse(jsonText) as {
+      moduleId?: string;
+      lecture?: string;
+      checkpointQuestion?: string;
+      readyToContinueLabel?: string;
+    };
+    const lecture = sanitizeLectureTranscript(parsed.lecture);
+
+    if (!isStrongLectureTranscript(lecture, [1])) return null;
+
+    return {
+      moduleId: sanitizeText(parsed.moduleId) || expectedModuleId,
+      lecture,
+      checkpointQuestion:
+        sanitizeText(parsed.checkpointQuestion) ||
+        "Buraya kadar kafana yatmayan veya tekrar etmemi istediğin bir yer var mı?",
+      readyToContinueLabel:
+        sanitizeText(parsed.readyToContinueLabel) || "Anladım, sonraki modüle geç",
+    };
   } catch {
     return null;
   }
@@ -474,6 +628,63 @@ function normalizeStructuredQuiz(
     .slice(0, 5);
 }
 
+function normalizeDocumentAnalysis(
+  analysis: RawDocumentAnalysis | undefined,
+): DocumentAnalysis | null {
+  if (!analysis || typeof analysis !== "object") return null;
+  const documentTitle = sanitizeText(analysis.documentTitle);
+  const mainSubject = sanitizeText(analysis.mainSubject);
+  const coreProblem = sanitizeText(analysis.coreProblem);
+  const importantConcepts = normalizeStringArray(analysis.importantConcepts, 10);
+  const examRelevantParts = normalizeStringArray(analysis.examRelevantParts, 8);
+
+  if (mainSubject.length < 4 || coreProblem.length < 12 || importantConcepts.length === 0) {
+    return null;
+  }
+
+  return {
+    documentTitle: documentTitle || mainSubject,
+    mainSubject,
+    coreProblem,
+    importantConcepts,
+    irrelevantOrLowPriorityParts: normalizeStringArray(
+      analysis.irrelevantOrLowPriorityParts,
+      6,
+    ),
+    examRelevantParts,
+    sourcePageMap: Array.isArray(analysis.sourcePageMap)
+      ? analysis.sourcePageMap
+          .map((item) => ({
+            page: normalizePage(item?.page),
+            concepts: normalizeStringArray(item?.concepts, 6),
+          }))
+          .filter((item) => item.concepts.length > 0)
+          .slice(0, 12)
+      : [],
+  };
+}
+
+function normalizeConceptGraph(
+  graph: RawConceptGraphNode[] | undefined,
+): ConceptGraphNode[] {
+  if (!Array.isArray(graph)) return [];
+
+  return graph
+    .map((node) => ({
+      concept: cleanTeachingTitle(sanitizeText(node.concept)),
+      dependsOn: normalizeStringArray(node.dependsOn, 5).map(cleanTeachingTitle),
+      relatedTo: normalizeStringArray(node.relatedTo, 5).map(cleanTeachingTitle),
+      whyItMatters: sanitizeText(node.whyItMatters),
+    }))
+    .filter(
+      (node) =>
+        node.concept.length > 4 &&
+        node.whyItMatters.length > 12 &&
+        !isWeakTeachingTitle(node.concept),
+    )
+    .slice(0, 12);
+}
+
 function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
   if (!lesson || typeof lesson !== "object" || !Array.isArray(lesson.modules)) {
     return null;
@@ -521,6 +732,16 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
       return {
         id: sanitizeText(module?.id) || `modul-${index + 1}`,
         title: cleanTeachingTitle(sanitizeText(module?.title)),
+        goal:
+          sanitizeText(module?.goal) ||
+          `${cleanTeachingTitle(sanitizeText(module?.title))} kavramını sınavda açıklamak.`,
+        whyThisModuleExists:
+          sanitizeText(module?.whyThisModuleExists) ||
+          "Bu modül PDF'teki ana öğrenme basamaklarından birini ayırır.",
+        dependsOn: normalizeStringArray(module?.dependsOn, 5).map(cleanTeachingTitle),
+        examAngle:
+          sanitizeText(module?.examAngle) ||
+          "Bu başlık sınavda kavramın amacı ve örneği üzerinden sorulabilir.",
         estimatedMinutes: normalizePositiveNumber(module?.estimatedMinutes, 8),
         learningGoals: normalizeStringArray(module?.learningGoals, 4),
         prerequisites: normalizeStringArray(module?.prerequisites, 3),
@@ -536,7 +757,10 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
         module.title.length > 5 &&
         !isWeakTeachingTitle(module.title) &&
         module.learningGoals.length > 0 &&
-        isStrongLectureTranscript(module.lectureTranscript, module.sourcePages),
+        module.goal.length > 12 &&
+        module.whyThisModuleExists.length > 12 &&
+        module.examAngle.length > 12 &&
+        module.sourcePages.length > 0,
     )
     .slice(0, 6);
 
@@ -545,6 +769,9 @@ function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
   return {
     lessonTitle: sanitizeText(lesson.lessonTitle) || "AI Ders",
     courseTitle: sanitizeText(lesson.courseTitle) || "Bu ders",
+    moduleCountReason:
+      sanitizeText(lesson.moduleCountReason) ||
+      "Modül sayısı PDF'teki kavram ayrımlarına göre belirlendi.",
     estimatedTotalMinutes: normalizePositiveNumber(
       lesson.estimatedTotalMinutes,
       modules.reduce((total, module) => total + module.estimatedMinutes, 0),
@@ -715,20 +942,27 @@ function composeTranscriptFromBlocks(
     blockByType.example ?? "",
     blockByType.formula ?? "",
     blockByType.mini_summary ?? "",
-    "Buraya kadar kafana yatmayan bir yer var mı?",
+    "Buraya kadar kafana yatmayan veya tekrar etmemi istediğin bir yer var mı?",
   ]
     .filter((section) => section.trim().length > 20)
     .join("\n\n");
 }
 
 function isStrongLectureTranscript(text: string, sourcePages: number[]) {
-  if (countWords(text) < 500) return false;
+  if (countWords(text) < 600) return false;
   if (sourcePages.length === 0) return false;
   if (looksLikeRawPdfDump(text)) return false;
   if (hasRepeatedSentences(text)) return false;
   if (hasBannedLectureLabel(text)) return false;
+  if (hasBannedGenericLecturePhrase(text)) return false;
   if (!startsWithProblemHook(text)) return false;
-  if (!/kafana yatmayan bir yer var mı\??$/i.test(text.trim())) return false;
+  if (
+    !/kafana yatmayan(?: veya tekrar etmemi istediğin)? bir yer var mı\??$/i.test(
+      text.trim(),
+    )
+  ) {
+    return false;
+  }
 
   const normalized = text.toLocaleLowerCase("tr");
   const hasExample = /örnek|mesela|diyelim/.test(normalized);
@@ -758,6 +992,12 @@ function hasRepeatedSentences(value: string) {
 
 function hasBannedLectureLabel(value: string) {
   return /(^|\n)\s*(Giriş|Kavramın mantığı|Teknik açıklama|PDF'?i okurken|PDF’yi okurken|Mini özet|Neden önemli|Günlük hayat analojisi|Kontrol noktası)\s*:?\s*(\n|$)/i.test(
+    value,
+  );
+}
+
+function hasBannedGenericLecturePhrase(value: string) {
+  return /tanım ilk durak değil|PDF kelimeleri kopuk görünür|hoca uzun metin beklemez|önce problem sonra mantık sonra örnek/i.test(
     value,
   );
 }
@@ -811,6 +1051,6 @@ function looksLikeRawPdfDump(value: string) {
   );
 }
 
-function limitText(text: string) {
-  return text.length > 18000 ? `${text.slice(0, 18000)}\n[Metin kısaltıldı]` : text;
+function limitText(text: string, maxLength = 18000) {
+  return text.length > maxLength ? `${text.slice(0, maxLength)}\n[Metin kısaltıldı]` : text;
 }

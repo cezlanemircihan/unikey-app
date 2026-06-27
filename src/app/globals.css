@@ -1341,6 +1341,7 @@ button {
 }
 
 .lesson-assist-note,
+.lesson-loading-card,
 .lesson-narrative-card {
   border: 1px solid rgba(196, 181, 253, 0.12);
   border-radius: 0.9rem;
@@ -1353,7 +1354,12 @@ button {
   background: rgba(20, 184, 166, 0.1);
 }
 
+.lesson-loading-card {
+  margin-top: 0.9rem;
+}
+
 .lesson-assist-note p,
+.lesson-loading-card p,
 .lesson-narrative-card p {
   color: #dbe4f0;
   line-height: 1.78;

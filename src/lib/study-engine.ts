@@ -38,6 +38,26 @@ export type StudySummary = {
   }>;
 };
 
+export type DocumentAnalysis = {
+  documentTitle: string;
+  mainSubject: string;
+  coreProblem: string;
+  importantConcepts: string[];
+  irrelevantOrLowPriorityParts: string[];
+  examRelevantParts: string[];
+  sourcePageMap: Array<{
+    page: number;
+    concepts: string[];
+  }>;
+};
+
+export type ConceptGraphNode = {
+  concept: string;
+  dependsOn: string[];
+  relatedTo: string[];
+  whyItMatters: string;
+};
+
 export type StructuredQuizQuestion = {
   question: string;
   options: string[];
@@ -75,6 +95,10 @@ export type LessonBlock = {
 export type LessonModule = {
   id: string;
   title: string;
+  goal: string;
+  whyThisModuleExists: string;
+  dependsOn: string[];
+  examAngle: string;
   estimatedMinutes: number;
   learningGoals: string[];
   prerequisites: string[];
@@ -88,8 +112,11 @@ export type LessonModule = {
 export type AiLesson = {
   lessonTitle: string;
   courseTitle: string;
+  moduleCountReason: string;
   estimatedTotalMinutes: number;
   difficulty: LessonDifficulty;
+  documentAnalysis?: DocumentAnalysis;
+  conceptGraph?: ConceptGraphNode[];
   modules: LessonModule[];
   finalQuiz: {
     availableAfterModulesCompleted: true;
@@ -581,8 +608,56 @@ export function buildSummary(text: string, courseName: string) {
   return formatStructuredSummary(buildStructuredSummary(text, courseName));
 }
 
+export function buildDocumentAnalysis(
+  text: string,
+  courseName: string,
+): DocumentAnalysis {
+  const topics = buildTopics(text, 10);
+  const pages = splitPages(text);
+  const primaryTopic = topics[0];
+
+  return {
+    documentTitle: `${courseName} dokümanı`,
+    mainSubject: primaryTopic?.title ?? "PDF'in ana konusu",
+    coreProblem:
+      primaryTopic?.whyImportant ??
+      "Dokümandaki kavramların hangi problemi çözmek için anlatıldığını ayırmak gerekir.",
+    importantConcepts: topics.map((topic) => topic.title).slice(0, 10),
+    irrelevantOrLowPriorityParts: extractLowPriorityParts(text),
+    examRelevantParts: topics
+      .filter((topic) => topic.examLikelihood !== "low")
+      .map((topic) => `${topic.title}: ${topic.whyImportant}`)
+      .slice(0, 8),
+    sourcePageMap: pages.slice(0, 12).map((page) => ({
+      page: page.page,
+      concepts: topics
+        .filter((topic) =>
+          topic.sourcePages.includes(page.page) ||
+          topic.title
+            .split(/\s+/)
+            .some((part) => part.length > 4 && page.text.toLocaleLowerCase("tr").includes(part.toLocaleLowerCase("tr"))),
+        )
+        .map((topic) => topic.title)
+        .slice(0, 5),
+    })),
+  };
+}
+
+export function buildConceptGraph(topics: StudyTopic[]): ConceptGraphNode[] {
+  return topics.slice(0, 10).map((topic, index, list) => ({
+    concept: topic.title,
+    dependsOn: index === 0 ? [] : [list[index - 1].title],
+    relatedTo: list
+      .filter((candidate, candidateIndex) => candidateIndex !== index)
+      .filter((candidate) => shareConceptWords(topic.title, candidate.title))
+      .map((candidate) => candidate.title)
+      .slice(0, 3),
+    whyItMatters: topic.whyImportant,
+  }));
+}
+
 export function buildLesson(text: string, courseName: string): AiLesson {
-  const topics = buildTopics(text, 6);
+  const topics = buildTopics(text, 10);
   const usableTopics =
     topics.length > 0
       ? topics
@@ -597,24 +672,77 @@ export function buildLesson(text: string, courseName: string): AiLesson {
             sourcePages: [1],
           },
         ];
-  const modules = usableTopics.slice(0, 5).map((topic, index) =>
-    buildLessonModule(topic, courseName, index),
+  const moduleCount = decideModuleCount(usableTopics);
+  const documentAnalysis = buildDocumentAnalysis(text, courseName);
+  const conceptGraph = buildConceptGraph(usableTopics);
+  const modules = usableTopics.slice(0, moduleCount).map((topic, index) =>
+    buildLessonModule(topic, courseName, index, usableTopics, conceptGraph),
   );
 
   return {
     lessonTitle: `${courseName} AI Dersi`,
     courseTitle: courseName,
+    moduleCountReason: buildModuleCountReason(moduleCount, usableTopics),
     estimatedTotalMinutes: modules.reduce(
       (total, module) => total + module.estimatedMinutes,
       0,
     ),
     difficulty: inferLessonDifficulty(usableTopics),
+    documentAnalysis,
+    conceptGraph,
     modules,
     finalQuiz: {
       availableAfterModulesCompleted: true,
       questionCount: Math.max(4, Math.min(10, modules.length + 2)),
     },
   };
+}
+
+export function buildModuleLecture({
+  module,
+  lesson,
+  text,
+  mode = "default",
+}: {
+  module: LessonModule;
+  lesson?: AiLesson;
+  text: string;
+  mode?: "default" | "repeat" | "simple" | "example";
+}) {
+  const sourceText = extractModuleSourceText(text, module.sourcePages);
+  const contextTopics =
+    lesson?.modules
+      .filter((candidate) => candidate.id !== module.id)
+      .map((candidate) => candidate.title)
+      .slice(0, 4) ?? [];
+  const hook = buildSpecificProblemHook(module.title);
+  const conceptExplanation = explainTopic(module.title, module.goal);
+  const example = buildContextualExample(module.title, sourceText, mode);
+  const examAngle = module.examAngle || buildExamAngle(module.title, module.sourcePages);
+  const commonMistake = buildModuleCommonMistake(module.title);
+  const answerShape = buildModuleAnswerShape(module.title);
+  const pageContext = buildSourcePageContext(sourceText, module.sourcePages);
+  const tonePrefix =
+    mode === "simple"
+      ? "Bunu daha sade kurarsak, "
+      : mode === "example"
+        ? "Bu kez konuyu örnek üzerinden ilerletelim: "
+        : mode === "repeat"
+          ? "Aynı modülü bir kez daha ama daha toparlı biçimde düşünelim: "
+          : "";
+  const relatedText = contextTopics.length
+    ? `Bu modül, özellikle ${contextTopics.join(", ")} başlıklarıyla karıştırılmamalı; onlar yakın dursa da burada odak ${module.title} için çözülen problem.`
+    : "Bu modülde tek hedef, kavramı kendi problemi içinde netleştirmek.";
+
+  return [
+    `${tonePrefix}${hook} ${module.whyThisModuleExists} Bu yüzden ${module.title} başlığını bir isim gibi değil, belirli bir ihtiyaca verilen cevap gibi ele alacağız.`,
+    `${conceptExplanation} Bu noktada kavramı sadece tanım gibi okumak zayıf kalır. Sistemin neyi ayırt etmeye çalıştığını, bu ayrımı hangi kuralla yaptığını ve bu kuralın kullanıcıya nasıl göründüğünü birlikte düşünmek gerekir. ${relatedText} Özellikle teknik derslerde hoca çoğu zaman kavramın adını değil, o kavramın bir durumda nasıl davrandığını ölçer. Bu yüzden burada önemli olan, ${module.title} ifadesinin arkasındaki mekanizmayı kendi cümlenle kurabilmen.`,
+    `${pageContext} Bu parçadan çıkarılacak ana fikir şu: PDF'te geçen komut, yapı veya terim tek başına değerli değil; hangi davranışı görünür yaptığı için değerli. Bir sınav cevabında kaynak sayfadaki ifadeyi birebir kopyalamak yerine, onu kısa bir durumla ilişkilendirmen gerekir. Böyle yaptığında hem tanımı hem de çalışma mantığını aynı anda göstermiş olursun.`,
+    `${example} Bu örnek küçük görünebilir ama sınavda çoğu hata tam burada çıkar: öğrenci kavramın adını biliyor, fakat hangi durumda devreye girdiğini anlatamıyor. Örneği doğru kullanmanın yolu, önce verilen durumda sistemin hangi kararı verdiğini söylemek, sonra ${module.title} kavramının bu kararı nasıl mümkün kıldığını açıklamaktır. Bu bağlantıyı kurduğunda cevap “ezber tanım” olmaktan çıkar ve hocanın beklediği yorum seviyesine yaklaşır.`,
+    `${commonMistake} Bu karışıklığı önlemek için kavramı üç soruyla kontrol edebilirsin: burada hangi nesne veya işlem var, sistem bu nesneye nasıl ulaşıyor, sonuç kullanıcıya nasıl yansıyor? Bu üç soruya cevap verebiliyorsan modülün ana omurgası yerine oturmuş demektir. Veremiyorsan genellikle sorun kavramı bilmemek değil, kavramın hangi bağlamda çalıştığını kaçırmaktır.`,
+    `${examAngle} ${answerShape} Böyle bir soru geldiğinde cevabı ezber cümlesiyle başlatmak yerine verilen durumun ne olduğunu kurmak daha güvenli olur. Ardından bu modüldeki kavramın o durumda hangi rolü üstlendiğini söylersin. Son cümlede de küçük bir örnek verirsen cevap sınav diliyle tamamlanmış olur.`,
+    `Bu modülde özellikle şunu netleştir: ${module.goal} Kaynak sayfalar: ${module.sourcePages.join(", ")}. Bu hedefe ulaşmak için kavramın tanımını, hangi problemi çözdüğünü, PDF'teki örnekte nasıl göründüğünü ve sınavda hangi açıdan sorulabileceğini birlikte tutman gerekiyor. Kendini kontrol etmek için bu başlığı bir arkadaşına iki dakikada anlatmaya çalış: verilen durumu açıkla, kavramın rolünü belirt ve küçük bir örnekle sonucu görünür hale getir. Bunu yapabiliyorsan modül işlevini yerine getirmiştir. Buraya kadar kafana yatmayan veya tekrar etmemi istediğin bir yer var mı?`,
+  ].join("\n\n");
 }
 
 export function attachQuizToLesson(
@@ -830,6 +958,9 @@ export function calculateOutputQuality({
   quiz: QuizQuestion[];
   lesson?: AiLesson;
 }): OutputQualityReport {
+  const generatedLectureModules = (lesson?.modules ?? []).filter(
+    (module) => readLectureTranscript(module).trim().length > 0,
+  );
   const checks = {
     naturalTopicTitles:
       topics.length > 0 &&
@@ -866,44 +997,46 @@ export function calculateOutputQuality({
     lessonModulesReady:
       Boolean(lesson) && (lesson?.modules.length ?? 0) > 0,
     lectureTranscriptDeepEnough:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every(
-        (module) => countWords(readLectureTranscript(module)) >= 500,
+      generatedLectureModules.length === 0 ||
+      generatedLectureModules.every(
+        (module) => countWords(readLectureTranscript(module)) >= 600,
       ),
     lectureTranscriptNaturalFlow:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every((module) =>
+      generatedLectureModules.length === 0 ||
+      generatedLectureModules.every((module) =>
         isNaturalLectureTranscript(readLectureTranscript(module)),
       ),
     lectureTranscriptProblemFirst:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every((module) =>
+      generatedLectureModules.length === 0 ||
+      generatedLectureModules.every((module) =>
         startsWithProblemHook(readLectureTranscript(module)),
       ),
     lectureTranscriptExamplePresent:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every((module) =>
+      generatedLectureModules.length === 0 ||
+      generatedLectureModules.every((module) =>
         hasLessonSignal(readLectureTranscript(module), ["örnek", "diyelim", "mesela"]),
       ),
     lectureTranscriptExamAnglePresent:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every((module) =>
+      generatedLectureModules.length === 0 ||
+      generatedLectureModules.every((module) =>
         hasLessonSignal(readLectureTranscript(module), ["sınavda", "vize", "final", "hoca"]),
       ),
     lectureTranscriptNoBannedLabels:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every(
-        (module) => !hasBannedLectureLabel(readLectureTranscript(module)),
+      generatedLectureModules.length === 0 ||
+      generatedLectureModules.every(
+        (module) =>
+          !hasBannedLectureLabel(readLectureTranscript(module)) &&
+          !hasBannedGenericLecturePhrase(readLectureTranscript(module)),
       ),
     lectureTranscriptNoRepeatedSentences:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every(
+      generatedLectureModules.length === 0 ||
+      generatedLectureModules.every(
         (module) => !hasRepeatedSentences(readLectureTranscript(module)),
       ),
     lectureTranscriptEndsWithQuestion:
-      Boolean(lesson) &&
-      (lesson?.modules ?? []).every((module) =>
-        /kafana yatmayan bir yer var mı\??$/i.test(
+      generatedLectureModules.length === 0 ||
+      generatedLectureModules.every((module) =>
+        /kafana yatmayan(?: veya tekrar etmemi istediğin)? bir yer var mı\??$/i.test(
           readLectureTranscript(module).trim(),
         ),
       ),
@@ -1113,34 +1246,230 @@ function qualityWarningFor(key: keyof OutputQualityReport["checks"]) {
   return warnings[key];
 }
 
+function decideModuleCount(topics: StudyTopic[]) {
+  const highPriorityCount = topics.filter((topic) => topic.examLikelihood === "high").length;
+  const baseCount = Math.max(4, topics.length);
+  const adjustedCount = highPriorityCount >= 4 ? Math.max(baseCount, highPriorityCount + 1) : baseCount;
+
+  return Math.min(10, adjustedCount);
+}
+
+function buildModuleCountReason(moduleCount: number, topics: StudyTopic[]) {
+  const highPriorityCount = topics.filter((topic) => topic.examLikelihood === "high").length;
+
+  if (moduleCount <= 4) {
+    return "PDF az sayıda temel kavrama yoğunlaştığı için plan dört ana öğrenme basamağına indirildi.";
+  }
+
+  if (highPriorityCount >= 4) {
+    return "PDF sınav açısından yoğun başlıklar içerdiği için yüksek öncelikli konular ayrı modüllere bölündü.";
+  }
+
+  return "Modül sayısı, kavramların birbirinden ayrışma düzeyine ve kaynak sayfa dağılımına göre belirlendi.";
+}
+
+function extractLowPriorityParts(text: string) {
+  const keywords = extractSingleKeywords(text, 12);
+
+  return keywords
+    .filter((keyword) => /chapter|figure|table|example|note|slide|page|copyright/i.test(keyword))
+    .map((keyword) => `${humanizeTerm(keyword)} gibi sınav çekirdeğine doğrudan girmeyen destek ifadeleri`)
+    .slice(0, 4);
+}
+
+function shareConceptWords(first: string, second: string) {
+  const firstWords = new Set(
+    normalizeTechLower(first)
+      .split(/\s+/)
+      .filter((word) => word.length > 4),
+  );
+
+  return normalizeTechLower(second)
+    .split(/\s+/)
+    .some((word) => firstWords.has(word));
+}
+
+function extractModuleSourceText(text: string, sourcePages: number[]) {
+  const pages = splitPages(text);
+  const selectedPages = pages.filter((page) => sourcePages.includes(page.page));
+  const source = (selectedPages.length ? selectedPages : pages.slice(0, 2))
+    .map((page) => page.text)
+    .join(" ");
+
+  return source.slice(0, 2800);
+}
+
+function buildSpecificProblemHook(title: string) {
+  const normalized = normalizeTechLower(title);
+
+  if (normalized.includes("unix dosya sistemi")) {
+    return "Bir işletim sisteminde dosyaların yalnızca saklanması yetmez; asıl sorun, bu dosyaların karışmadan bulunması, dizinler arasında izlenmesi ve komutlarla tutarlı biçimde yönetilmesidir.";
+  }
+
+  if (normalized.includes("working directory") || normalized.includes("path")) {
+    return "Aynı dosya adını iki farklı dizinde kullanabildiğinde sistemin hangi dosyayı kastettiğini anlaması gerekir; working directory problemi tam burada ortaya çıkar.";
+  }
+
+  if (normalized.includes("everything is a file")) {
+    return "UNIX'in ilginç tarafı, farklı kaynakları bambaşka kurallarla yönetmek yerine onları ortak bir erişim mantığına yaklaştırmasıdır.";
+  }
+
+  if (normalized.includes("nfs") || normalized.includes("ağ dosya")) {
+    return "Dosya başka bir makinedeyken onu yereldeymiş gibi kullanmak cazip görünür; zor kısım, bu uzaklığı kullanıcıya hissettirmeden güvenilir erişim sağlamaktır.";
+  }
+
+  if (normalized.includes("socket")) {
+    return "İki programın ağ üzerinden konuşması için önce birbirlerini bulmaları ve veri alışverişi yapacakları uç noktayı netleştirmeleri gerekir.";
+  }
+
+  if (normalized.includes("tcp")) {
+    return "Ağda veri göndermek tek başına yeterli değildir; parçaların sırayla, eksiksiz ve karşı tarafın anlayacağı biçimde ulaşması gerekir.";
+  }
+
+  if (normalized.includes("port") || normalized.includes("adres")) {
+    return "Bir makineye veri gelmesi yeterli değildir; gelen verinin o makinedeki hangi uygulamaya gideceğinin de ayırt edilmesi gerekir.";
+  }
+
+  if (normalized.includes("zamanlama") || normalized.includes("scheduling")) {
+    return "İşlemci aynı anda birçok iş beklerken hangisine sıra verileceği sistemin performansını doğrudan değiştirir.";
+  }
+
+  return `${title} başlığında temel problem, PDF'teki kavramın hangi durumda işe yaradığını ve hangi karışıklığı ortadan kaldırdığını ayırmaktır.`;
+}
+
+function buildContextualExample(
+  title: string,
+  sourceText: string,
+  mode: "default" | "repeat" | "simple" | "example",
+) {
+  const normalized = normalizeTechLower(title);
+  const sourceHint = splitSentences(sourceText)[0] ?? "";
+  const prefix =
+    mode === "example"
+      ? "Örneği biraz büyütelim: "
+      : mode === "simple"
+        ? "Basit bir örnekle düşün: "
+        : "";
+
+  if (normalized.includes("working directory") || normalized.includes("path")) {
+    return `${prefix}\`notes/week1.txt\` gibi göreli bir yol yazdığında sistem aramaya kök dizinden değil, o anda bulunduğun çalışma dizininden başlar. Bu yüzden aynı komut farklı dizinde farklı dosyaya ulaşabilir.`;
+  }
+
+  if (normalized.includes("nfs")) {
+    return `${prefix}Laboratuvardaki ortak ders klasörü kendi bilgisayarında normal bir dizin gibi görünüyorsa, öğrenci dosyanın uzakta durduğunu çoğu zaman fark etmez; NFS mantığı bu yerelmiş gibi kullanım hissini sağlar.`;
+  }
+
+  if (normalized.includes("socket")) {
+    return `${prefix}Tarayıcı bir sunucuya istek gönderdiğinde iki taraf arasında veri alışverişi yapılacak uç noktalar oluşur; socket bu uç noktanın programlama tarafındaki karşılığıdır.`;
+  }
+
+  if (normalized.includes("tcp")) {
+    return `${prefix}Bir dosya indirirken paketlerden biri eksik gelirse sistem bunu fark edip yeniden isteyebilmelidir; TCP'nin güvenilirlik mantığı bu ihtiyaca cevap verir.`;
+  }
+
+  if (normalized.includes("port") || normalized.includes("adres")) {
+    return `${prefix}IP adresi veriyi doğru makineye getirir, port ise aynı makinede web sunucusuna mı yoksa başka bir servise mi gideceğini belirler.`;
+  }
+
+  if (sourceHint) {
+    return `${prefix}PDF'teki şu bağlamı düşün: ${sourceHint} Bu cümlede önemli olan kelimeyi ezberlemek değil, anlatılan düzenin hangi sonucu doğurduğunu görebilmektir.`;
+  }
+
+  return `${prefix}Küçük bir sınav sorusunda bu kavram genellikle kısa bir durum verilerek ölçülür; senden beklenen, kavramın o durumda hangi işi yaptığını açıklamandır.`;
+}
+
+function buildSourcePageContext(sourceText: string, sourcePages: number[]) {
+  const sourceSentence = splitSentences(sourceText)
+    .find((sentence) => sentence.trim().length > 50) ??
+    splitSentences(sourceText)[0] ??
+    "";
+
+  if (!sourceSentence) {
+    return `Bu modülün dayandığı kaynak sayfalar ${sourcePages.join(", ")}. Metin kısa olsa bile buradaki bilgiyi sınav açısından yorumlamak gerekir.`;
+  }
+
+  return `Kaynak sayfalarda öne çıkan bağlam şuna benziyor: ${toTurkishTeachingSentence(sourceSentence)} Burada dikkat etmen gereken şey, cümlenin içindeki teknik kelimeyi tek başına almak değil, o kelimenin hangi işlem akışında kullanıldığını görmektir.`;
+}
+
+function buildModuleCommonMistake(title: string) {
+  const normalized = normalizeTechLower(title);
+
+  if (normalized.includes("working directory") || normalized.includes("path")) {
+    return "Bu konuda en sık karışan yer, mutlak yol ile göreli yolun aynı şey sanılmasıdır. Mutlak yol kök dizinden itibaren tam adres verir; göreli yol ise bulunduğun çalışma dizinine bağlıdır. Bu ayrımı kaçırırsan aynı komutun farklı dizinde neden farklı sonuç verdiğini açıklayamazsın.";
+  }
+
+  if (normalized.includes("everything is a file")) {
+    return "Bu konuda yapılan yaygın hata, cümleyi gerçek anlamda her şeyin normal metin dosyası olduğu şeklinde yorumlamaktır. Buradaki fikir, sistem kaynaklarının ortak bir erişim arayüzüyle temsil edilmesidir; yani mesele dosya adı değil, okuma-yazma ve erişim modelinin tutarlı olmasıdır.";
+  }
+
+  if (normalized.includes("unix dosya sistemi")) {
+    return "Bu konuda sık yapılan hata, dosya sistemini sadece klasör ağacı gibi görmek ve erişim mantığını gözden kaçırmaktır. UNIX tarafında önemli olan, kökten başlayan hiyerarşi sayesinde dosyanın nerede durduğunu, hangi yolla bulunduğunu ve komutların bu düzeni nasıl kullandığını birlikte düşünebilmektir.";
+  }
+
+  if (normalized.includes("nfs") || normalized.includes("ağ dosya")) {
+    return "Bu konuda karışıklık genellikle dosyanın nerede durduğu ile kullanıcıya nasıl göründüğü arasındadır. NFS'de dosya fiziksel olarak başka makinede olabilir; fakat kullanıcı onu yerel dizin yapısının parçası gibi kullanır. Sınavda bu farkı belirtmek cevabı güçlendirir.";
+  }
+
+  if (normalized.includes("socket")) {
+    return "Bu konuda en sık hata, socket'i doğrudan internet bağlantısının kendisi sanmaktır. Socket daha çok programın veri gönderip aldığı uç nokta gibi düşünülmelidir; bağlantının protokolü, adresi ve portu bu uç noktanın nasıl kullanılacağını belirler.";
+  }
+
+  if (normalized.includes("tcp")) {
+    return "Bu konuda yaygın hata, TCP'yi sadece veri gönderen bir yol gibi anlatmaktır. TCP'nin asıl değeri, verinin sırası, bütünlüğü ve karşı tarafa güvenilir biçimde ulaşmasıyla ilgilidir. Bu yüzden cevapta güvenilirlik fikri mutlaka görünmelidir.";
+  }
+
+  if (normalized.includes("port") || normalized.includes("adres")) {
+    return "Bu konuda karışan nokta, IP adresi ile portun aynı işi yaptığı sanılmasıdır. IP adresi makineyi bulmaya yardım eder; port ise o makinedeki doğru uygulamayı ayırır. İkisini ayırmadan client-server iletişimini açıklamak eksik kalır.";
+  }
+
+  return `Bu konuda yapılan temel hata, ${title} ifadesini PDF'teki bir kelime olarak ezberleyip onu bir sistem davranışıyla ilişkilendirmemektir. Oysa sınavda beklenen şey, kavramın hangi durumda ortaya çıktığını ve hangi sonucu değiştirdiğini gösterebilmendir.`;
+}
+
+function buildModuleAnswerShape(title: string) {
+  const normalized = normalizeTechLower(title);
+
+  if (normalized.includes("working directory") || normalized.includes("path")) {
+    return "Cevabı kurarken mevcut dizini belirt, yolun göreli mi mutlak mı olduğunu söyle ve komutun hangi dosyaya ulaşacağını kısa bir örnekle göster.";
+  }
+
+  if (normalized.includes("nfs") || normalized.includes("ağ dosya")) {
+    return "Cevabı kurarken uzak dosyanın nerede durduğunu, kullanıcının onu nasıl gördüğünü ve ağ bağımlılığının ne gibi sonuçlar doğurabileceğini birlikte yaz.";
+  }
+
+  if (normalized.includes("socket") || normalized.includes("tcp") || normalized.includes("port")) {
+    return "Cevabı kurarken iletişimin iki ucunu, adresleme bilgisini ve verinin doğru uygulamaya nasıl ulaştığını birbirinden ayırarak anlat.";
+  }
+
+  if (normalized.includes("unix") || normalized.includes("dosya")) {
+    return "Cevabı kurarken önce yapının hangi düzeni sağladığını söyle, sonra dosya-dizin ilişkisinin komutlarla nasıl kullanıldığını örnekle.";
+  }
+
+  return "Cevabı kurarken kavramın çözmeye çalıştığı durumu, çalışma mantığını ve küçük bir örneği aynı paragrafta birleştir.";
+}
+
 function buildLessonModule(
   topic: StudyTopic,
   courseName: string,
   index: number,
+  allTopics: StudyTopic[],
+  conceptGraph: ConceptGraphNode[],
 ): LessonModule {
   const sourcePages = topic.sourcePages.length > 0 ? topic.sourcePages : [1];
   const title = cleanTeachingTitle(topic.title);
-  const coreExplanation = explainTopic(title, topic.shortDescription);
-  const analogy = buildAnalogy(title);
-  const example = buildLessonExample(title);
-  const ruleExplanation = buildRuleExplanation(title);
+  const graphNode = conceptGraph.find((node) => node.concept === title);
   const examAngle = buildExamAngle(title, sourcePages);
-  const lectureTranscript = buildLectureTranscript({
-    title,
-    courseName,
-    topic,
-    coreExplanation,
-    analogy,
-    example,
-    ruleExplanation,
-    examAngle,
-    sourcePages,
-  });
   const estimatedMinutes = topic.examLikelihood === "high" ? 10 : 8;
 
   return {
     id: slugifyLessonId(title, index),
     title,
+    goal: `${title} kavramının hangi problemi çözdüğünü ve PDF bağlamında nasıl kullanıldığını açıklamak.`,
+    whyThisModuleExists:
+      index === 0
+        ? `${title}, sonraki başlıkların anlaşılması için temel bağlamı kuruyor.`
+        : `${title}, önceki modülde kurulan mantığın yeni bir kullanım alanını netleştiriyor.`,
+    dependsOn: graphNode?.dependsOn ?? allTopics.slice(Math.max(0, index - 1), index).map((item) => item.title),
+    examAngle,
     estimatedMinutes,
     learningGoals: [
       `${title} başlığının ne anlattığını açıklayabilmek`,
@@ -1153,61 +1482,9 @@ function buildLessonModule(
         : ["Önceki modülün ana fikrini anlamış olmak"],
     sourcePages,
     status: index === 0 ? "active" : "locked",
-    lectureTranscript,
+    lectureTranscript: "",
     blocks: [],
   };
-}
-
-function buildLectureTranscript({
-  title,
-  courseName,
-  topic,
-  coreExplanation,
-  analogy,
-  example,
-  ruleExplanation,
-  examAngle,
-  sourcePages,
-}: {
-  title: string;
-  courseName: string;
-  topic: StudyTopic;
-  coreExplanation: string;
-  analogy: string;
-  example: string;
-  ruleExplanation: string;
-  examAngle: string;
-  sourcePages: number[];
-}) {
-  const importance = topic.whyImportant || `${title} sınavda tanım ve yorum sorusu olarak karşına çıkabilir.`;
-  const source = `Kaynak: PDF sayfa ${sourcePages.join(", ")}.`;
-  const hook = buildLectureHook(title);
-
-  return [
-    `${hook} Bunu anlamadan PDF'teki kelimeler birbirinden kopuk görünüyor; bir yerde komut geçiyor, başka bir yerde dosya yolu, başka bir yerde izin ya da bağlantı. Ama aslında hepsi aynı soruya bağlanıyor: sistem bir şeyi nasıl buluyor, nasıl ayırt ediyor ve doğru yere nasıl ulaştırıyor? ${courseName} içinde ${title} başlığını bu gözle okuyunca mesele ezberlenecek bir tanım olmaktan çıkıyor.`,
-    `Şimdi bunu yavaş yavaş kuralım. ${coreExplanation} ${topic.shortDescription} Burada tanım ilk durak değil, vardığımız sonuç gibi düşünülmeli. Önce ihtiyaç var: kullanıcı ya da program bir şeye erişmek istiyor. Sonra sistemin düzeni var: bu erişimin rastgele değil, belirli kurallara göre yapılması gerekiyor. En sonunda kavram devreye giriyor ve bu kuralları daha anlaşılır hale getiriyor.`,
-    `${analogy} Bunu böyle düşünmek işini kolaylaştırır, çünkü teknik konu ilk bakışta soğuk görünebilir. Oysa çoğu sistem kavramı günlük hayattaki düzen kurma ihtiyacına benzer. Bir şeyi bulmak, doğru yere yönlendirmek, aynı isimli şeyleri karıştırmamak veya kimin neye erişebileceğini belirlemek gibi çok insani problemler bilgisayarda daha katı kurallarla çözülür.`,
-    `${ruleExplanation} Diyelim ki PDF'teki örneklerde bir komut, dosya yolu veya sistem davranışı geçiyor. O satırı tek başına ezberlemek yerine kendine şunu sor: bu örnekte sistem neyi çözmeye çalışıyor? Girdi ne, karar hangi kurala göre veriliyor, sonuçta kullanıcı ne görüyor? ${example} Böyle cevap kurduğunda artık sadece PDF'teki cümleyi tekrar etmiyorsun; konuyu kendi cümlenle anlatmış oluyorsun.`,
-    `Bir de şunu fark etmeni isterim: hocaların PDF'lerinde ayrıntılar bazen peş peşe gelir ve hepsi eşit önemliymiş gibi durur. Oysa sınavda güçlü cevap veren öğrenci, ayrıntıların içinden ana ilişkiyi seçebilen öğrencidir. Bu yüzden ${title} çalışırken kendine sürekli "burada sistem hangi karışıklığı önlüyor?" diye sor. Bu soru seni hem tanıma hem örneğe hem de olası sınav yorumuna aynı anda götürür.`,
-    `Bu başlık sınavda karşına geldiğinde hoca çoğu zaman senden çok uzun bir metin beklemez. Ama tek cümlelik tanım da genelde yetmez. ${examAngle} ${importance} İyi cevap şuna benzer: önce problemin ne olduğunu söylersin, sonra sistemin bu problemi hangi mantıkla çözdüğünü anlatırsın, en sona da küçük bir örnek koyarsın. Bu üç parçayı kurduğunda cevap hem anlaşılır hem de sınav diliyle güçlü olur.`,
-    `Buradan aklında kalması gereken şey şu: ${title} bir başlık adı değil, sistemin bir problemi çözme biçimi. PDF'teki ayrıntıları bu ana fikre bağlarsan neyin neden anlatıldığını daha rahat görürsün. ${source} Buraya kadar kafana yatmayan bir yer var mı?`,
-  ].join("\n\n");
-}
-
-function buildLectureHook(title: string) {
-  if (/dosya|file|directory|dizin|path|yol/i.test(title)) {
-    return "Bilgisayarında binlerce, hatta milyonlarca dosya var; peki terminal bir dosyayı ararken nereden başlayacağını nasıl biliyor hiç düşündün mü?";
-  }
-
-  if (/socket|tcp|port|ip|adres|bağlantı|network|ağ/i.test(title)) {
-    return "İki program birbirini hiç görmeden ağ üzerinden konuşabiliyor; asıl ilginç olan, verinin doğru makineye ve doğru uygulamaya şaşmadan ulaşması.";
-  }
-
-  if (/process|işlem|zamanlama|scheduling|queue|kuyruk/i.test(title)) {
-    return "Bilgisayar aynı anda onlarca iş yapıyor gibi görünür; ama işlemci çoğu anda kime sıra vereceğine karar vermek zorundadır.";
-  }
-
-  return "Bir konuyu ilk kez gördüğünde genelde en zor kısım tanımı ezberlemek değil, o kavrama neden ihtiyaç duyulduğunu fark etmektir.";
 }
 
 function buildExamAngle(title: string, sourcePages: number[]) {
@@ -1428,88 +1705,6 @@ function slugifyLessonId(title: string, index: number) {
   return `modul-${index + 1}-${slug || "ders"}`;
 }
 
-function buildAnalogy(title: string) {
-  const normalized = normalizeTechLower(title);
-
-  if (normalized.includes("unix dosya sistemi")) {
-    return "Bunu büyük bir kütüphane gibi düşün: kitaplar dosyalar, raflar dizinler, giriş kapısı da kök dizindir. Bir kitabı bulmak için raf yolunu bilmen gerekir.";
-  }
-
-  if (normalized.includes("working directory")) {
-    return "Bir binada bulunduğun kat gibi düşünebilirsin. Aynı oda numarası, hangi katta olduğuna göre farklı yere götürebilir; göreli path de mevcut dizine göre anlam kazanır.";
-  }
-
-  if (normalized.includes("everything is a file")) {
-    return "Tek tip priz sistemi gibi düşün: farklı cihazlar olabilir ama hepsi aynı priz standardıyla bağlanır. UNIX de farklı kaynaklara benzer dosya işlemleriyle yaklaşır.";
-  }
-
-  if (normalized.includes("nfs")) {
-    return "Buluttaki bir klasörü bilgisayarındaki klasörmüş gibi açmak gibidir. Dosya uzaktadır ama sen yereldeymiş gibi kullanırsın.";
-  }
-
-  if (normalized.includes("socket")) {
-    return "Socket'i iki kişi arasındaki telefon hattı gibi düşün. Konuşmanın kendisi veri, hat ise iki programın bağlandığı iletişim noktasıdır.";
-  }
-
-  if (normalized.includes("tcp")) {
-    return "TCP, kargoyu takip numarasıyla göndermek gibidir: parçalar sırayla gelsin, kaybolan olursa fark edilsin ve iletişim güvenilir olsun ister.";
-  }
-
-  if (normalized.includes("port") || normalized.includes("adres")) {
-    return "IP adresi apartmanı, port numarası da daire numarasını gösterir. Veri doğru binaya geldikten sonra doğru uygulamaya port ile ulaşır.";
-  }
-
-  return "Bu konuyu bir harita gibi düşün: kavramlar tek tek ezberlenecek duraklar değil, sınav sorusunu çözerken hangi yöne gideceğini gösteren işaretlerdir.";
-}
-
-function buildLessonExample(title: string) {
-  const normalized = normalizeTechLower(title);
-
-  if (normalized.includes("working directory")) {
-    return "`reports/final.pdf` gibi bir yol yazdığında sistem bu dosyayı mevcut çalışma dizininin altında arar. Bu yüzden komutun nerede çalıştığı sonucu değiştirir.";
-  }
-
-  if (normalized.includes("everything is a file")) {
-    return "Bir terminal veya aygıt dosyası doğrudan klasik metin dosyası değildir; ama sistem onu açma, okuma, yazma gibi dosya benzeri işlemlerle yönetebilir.";
-  }
-
-  if (normalized.includes("nfs")) {
-    return "Laboratuvardaki bir sunucudaki ders klasörü kendi bilgisayarında `/mnt/course` altında görünüyorsa, NFS benzeri bir mantıkla uzak dosya yerel gibi kullanılabilir.";
-  }
-
-  if (normalized.includes("socket")) {
-    return "Bir web tarayıcısı sunucuya bağlandığında iki taraf arasında socket uçları oluşur; istek ve cevap bu uçlar üzerinden akar.";
-  }
-
-  if (normalized.includes("tcp")) {
-    return "Dosya indirirken parçalar sırayla gelir ve eksik parça olursa tekrar istenir. TCP'nin güvenilirlik mantığı bunu sağlar.";
-  }
-
-  if (normalized.includes("port") || normalized.includes("adres")) {
-    return "Aynı bilgisayarda web sunucusu 80/443 portunda, başka bir servis farklı portta çalışabilir. Port, verinin hangi servise gideceğini ayırır.";
-  }
-
-  return "Sınavda bu konu genellikle kısa bir tanım ve ardından 'ne işe yarar?' sorusuyla gelir. Cevap verirken önce amacı, sonra örneği söylemek güçlü olur.";
-}
-
-function buildRuleExplanation(title: string) {
-  const normalized = normalizeTechLower(title);
-
-  if (normalized.includes("tcp")) {
-    return "Kuralın arkasındaki mantık güvenilirliktir: veri parçalara ayrıldığı için sıra, onay ve hata kontrolü olmazsa iki taraf aynı şeyi gördüğünden emin olamaz.";
-  }
-
-  if (normalized.includes("port") || normalized.includes("adres")) {
-    return "Adres ve port ayrı tutulur çünkü önce makineyi, sonra o makinedeki uygulamayı seçmek gerekir. Bu ayrım olmazsa gelen veri doğru programa yönlenemez.";
-  }
-
-  if (normalized.includes("working directory")) {
-    return "Göreli path'lerin çalışma dizinine bağlı olması komutları kısa yazmayı sağlar; ama dizin değişirse aynı komut farklı dosyayı hedefleyebilir.";
-  }
-
-  return "Bu modülde özel bir formül yoksa bile temel kural şu: kavramın adını değil, hangi problemi çözdüğünü ve hangi durumda kullanıldığını hatırla.";
-}
-
 function buildDistractors(title: string, allTopics: StudyTopic[]) {
   const otherTopic = allTopics.find((topic) => topic.title !== title);
 
@@ -1652,6 +1847,12 @@ function hasBannedLectureLabel(value: string) {
   );
 }
 
+function hasBannedGenericLecturePhrase(value: string) {
+  return /tanım ilk durak değil|pdf kelimeleri kopuk görünür|hoca uzun metin beklemez|önce problem sonra mantık sonra örnek/i.test(
+    value,
+  );
+}
+
 function startsWithProblemHook(value: string) {
   const firstSentence = splitSentences(value)[0] ?? "";
   if (!firstSentence.trim()) return false;
@@ -1666,7 +1867,7 @@ function startsWithProblemHook(value: string) {
 
 function isNaturalLectureTranscript(value: string) {
   const normalized = value.toLocaleLowerCase("tr");
-  const banned = hasBannedLectureLabel(value);
+  const banned = hasBannedLectureLabel(value) || hasBannedGenericLecturePhrase(value);
   const conversationalSignals = [
     "şimdi",
     "düşün",
