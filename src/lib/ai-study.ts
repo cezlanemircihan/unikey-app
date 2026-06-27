@@ -1,5 +1,9 @@
 import {
   formatStructuredSummary,
+  type AiLesson,
+  type LessonBlockType,
+  type LessonDifficulty,
+  type LessonModuleStatus,
   type QuizDifficulty,
   type QuizQuestion,
   type StudySummary,
@@ -14,6 +18,7 @@ type StudyPack = {
   topics?: StudyTopic[];
   structuredSummary?: StudySummary;
   structuredQuiz?: StructuredQuizQuestion[];
+  lesson?: AiLesson;
 };
 
 export type AiStudyDebug = {
@@ -40,6 +45,7 @@ type OpenAIResponse = {
 type RawTopic = Partial<StudyTopic>;
 type RawSummary = Partial<StudySummary>;
 type RawQuizQuestion = Partial<StructuredQuizQuestion> & Partial<QuizQuestion>;
+type RawLesson = Partial<AiLesson>;
 
 const openAiEndpoint = "https://api.openai.com/v1/responses";
 const defaultModel = "gpt-4.1";
@@ -96,6 +102,38 @@ ${limitText(text)}
 Yalnızca parse edilebilir JSON döndür. Markdown, açıklama, kod bloğu veya JSON dışı metin yazma.
 JSON şeması tam olarak şu yapıda olsun:
 {
+  "lesson": {
+    "lessonTitle": "PDF'ten çıkarılan Türkçe AI ders başlığı",
+    "courseTitle": "${courseName}",
+    "estimatedTotalMinutes": 45,
+    "difficulty": "beginner | intermediate | advanced",
+    "modules": [
+      {
+        "id": "modul-1-kisa-id",
+        "title": "Öğretilebilir Türkçe modül başlığı",
+        "estimatedMinutes": 8,
+        "learningGoals": ["Bu modül sonunda öğrenci neyi anlayacak?"],
+        "prerequisites": ["Gerekli ön bilgi yoksa boş bırakma, kısa yaz"],
+        "sourcePages": [1],
+        "status": "active | locked | completed",
+        "blocks": [
+          {
+            "type": "intro | analogy | core_explanation | example | formula | mini_summary | checkpoint",
+            "title": "Blok başlığı",
+            "content": "Kısa, öğretici Türkçe içerik",
+            "question": null,
+            "options": null,
+            "correctAnswer": null,
+            "explanation": null
+          }
+        ]
+      }
+    ],
+    "finalQuiz": {
+      "availableAfterModulesCompleted": true,
+      "questionCount": 5
+    }
+  },
   "topics": [
     {
       "title": "Doğal, öğretilebilir Türkçe konu başlığı",
@@ -154,6 +192,12 @@ Zorunlu kurallar:
 - Quiz açıklaması öğrencinin yanlışını düzeltecek kadar öğretici olsun.
 - sourcePages ve sourcePage sadece sayı olsun. Sayfa bilinmiyorsa 1 yaz.
 - PDF'te olmayan bilgiyi uydurma.
+- Ana deneyim summary değil lesson olacak; lesson alanını mutlaka doldur.
+- Her module blok blok öğretmeli: intro, analogy, core_explanation, example, mini_summary ve checkpoint olmalı.
+- Checkpoint sorusu şu hissi vermeli: "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?"
+- İlk module status "active", diğerleri "locked" olsun.
+- Her modül 500-800 kelimeyi geçmesin; uzun ders dökümü yazma.
+- Quiz sorularında mümkünse moduleId alanını ilgili modül id'siyle eşleştir.
 `;
 
   const output = await safeCallOpenAi(prompt);
@@ -266,11 +310,13 @@ function parseStudyPack(output: string): StudyPack | null {
 
   try {
     const parsed = JSON.parse(jsonText) as {
+      lesson?: RawLesson;
       topics?: RawTopic[];
       summary?: RawSummary | string;
       keywords?: string[];
       quiz?: RawQuizQuestion[];
     };
+    const lesson = normalizeLesson(parsed.lesson);
     const topics = normalizeTopics(parsed.topics);
     const structuredSummary =
       typeof parsed.summary === "object"
@@ -286,6 +332,7 @@ function parseStudyPack(output: string): StudyPack | null {
         topics,
         structuredSummary,
         structuredQuiz,
+        lesson: lesson ?? undefined,
       };
     }
 
@@ -307,6 +354,7 @@ function parseStudyPack(output: string): StudyPack | null {
         summary: sanitizeText(parsed.summary),
         keywords: parsed.keywords.filter((keyword) => typeof keyword === "string").map(sanitizeText),
         quiz: legacyQuiz,
+        lesson: lesson ?? undefined,
       };
     }
 
@@ -402,6 +450,7 @@ function normalizeStructuredQuiz(
         correctAnswer,
         explanation: sanitizeText(question.explanation ?? question.source),
         topic: sanitizeText(question.topic),
+        moduleId: sanitizeText(question.moduleId),
         difficulty: normalizeDifficulty(question.difficulty),
         sourcePage: normalizePage(question.sourcePage),
       };
@@ -419,6 +468,87 @@ function normalizeStructuredQuiz(
     .slice(0, 5);
 }
 
+function normalizeLesson(lesson: RawLesson | undefined): AiLesson | null {
+  if (!lesson || typeof lesson !== "object" || !Array.isArray(lesson.modules)) {
+    return null;
+  }
+
+  const modules = lesson.modules
+    .map((module, index) => {
+      const blocks = Array.isArray(module?.blocks)
+        ? module.blocks
+            .map((block) => ({
+              type: normalizeBlockType(block?.type),
+              title: sanitizeText(block?.title),
+              content: sanitizeText(block?.content),
+              question:
+                typeof block?.question === "string"
+                  ? sanitizeText(block.question)
+                  : null,
+              options: Array.isArray(block?.options)
+                ? normalizeOptions(block.options)
+                : null,
+              correctAnswer:
+                typeof block?.correctAnswer === "string"
+                  ? sanitizeText(block.correctAnswer)
+                  : null,
+              explanation:
+                typeof block?.explanation === "string"
+                  ? sanitizeText(block.explanation)
+                  : null,
+            }))
+            .filter(
+              (block) =>
+                block.title.length > 2 &&
+                block.content.length > 12 &&
+                !looksLikeRawPdfDump(block.content),
+            )
+        : [];
+
+      return {
+        id: sanitizeText(module?.id) || `modul-${index + 1}`,
+        title: sanitizeText(module?.title),
+        estimatedMinutes: normalizePositiveNumber(module?.estimatedMinutes, 8),
+        learningGoals: normalizeStringArray(module?.learningGoals, 4),
+        prerequisites: normalizeStringArray(module?.prerequisites, 3),
+        sourcePages: normalizeSourcePages(module?.sourcePages),
+        status: normalizeModuleStatus(module?.status, index),
+        blocks,
+      };
+    })
+    .filter(
+      (module) =>
+        module.title.length > 5 &&
+        module.learningGoals.length > 0 &&
+        module.blocks.some((block) => block.type === "core_explanation") &&
+        module.blocks.some((block) => block.type === "checkpoint"),
+    )
+    .slice(0, 6);
+
+  if (modules.length === 0) return null;
+
+  return {
+    lessonTitle: sanitizeText(lesson.lessonTitle) || "AI Ders",
+    courseTitle: sanitizeText(lesson.courseTitle) || "Bu ders",
+    estimatedTotalMinutes: normalizePositiveNumber(
+      lesson.estimatedTotalMinutes,
+      modules.reduce((total, module) => total + module.estimatedMinutes, 0),
+    ),
+    difficulty: normalizeLessonDifficulty(lesson.difficulty),
+    modules: modules.map((module, index) => ({
+      ...module,
+      status: index === 0 ? "active" : module.status === "completed" ? "completed" : "locked",
+    })),
+    finalQuiz: {
+      availableAfterModulesCompleted: true,
+      questionCount: normalizePositiveNumber(
+        lesson.finalQuiz?.questionCount,
+        Math.max(4, modules.length + 1),
+      ),
+    },
+  };
+}
+
 function toLegacyQuizQuestion(question: StructuredQuizQuestion): QuizQuestion {
   return {
     question: question.question,
@@ -427,6 +557,7 @@ function toLegacyQuizQuestion(question: StructuredQuizQuestion): QuizQuestion {
     source: `${question.explanation} Kaynak: PDF sayfa ${question.sourcePage}`,
     explanation: question.explanation,
     topic: question.topic,
+    moduleId: question.moduleId,
     difficulty: question.difficulty,
     sourcePage: question.sourcePage,
   };
@@ -469,6 +600,43 @@ function normalizeDifficulty(value: unknown): QuizDifficulty {
   return value === "easy" || value === "medium" || value === "hard"
     ? value
     : "medium";
+}
+
+function normalizeLessonDifficulty(value: unknown): LessonDifficulty {
+  return value === "beginner" || value === "intermediate" || value === "advanced"
+    ? value
+    : "intermediate";
+}
+
+function normalizeBlockType(value: unknown): LessonBlockType {
+  const allowed: LessonBlockType[] = [
+    "intro",
+    "analogy",
+    "core_explanation",
+    "example",
+    "formula",
+    "mini_summary",
+    "checkpoint",
+  ];
+
+  return allowed.includes(value as LessonBlockType)
+    ? (value as LessonBlockType)
+    : "core_explanation";
+}
+
+function normalizeModuleStatus(value: unknown, index: number): LessonModuleStatus {
+  if (value === "completed" || value === "active" || value === "locked") {
+    return value;
+  }
+
+  return index === 0 ? "active" : "locked";
+}
+
+function normalizePositiveNumber(value: unknown, fallback: number) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) && numberValue > 0
+    ? Math.round(numberValue)
+    : fallback;
 }
 
 function normalizeSourcePages(value: unknown) {

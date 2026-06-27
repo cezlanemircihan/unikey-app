@@ -8,6 +8,9 @@ import {
 import {
   buildQuizResultAnalysis,
   buildWeakTopicMiniQuiz,
+  type AiLesson,
+  type LessonBlockType,
+  type LessonModule,
   type OutputQualityReport,
   type QuizQuestion as StudyQuizQuestion,
   type StudySummary,
@@ -40,6 +43,7 @@ type DocumentItem = {
   topics?: StudyTopic[];
   structuredSummary?: StudySummary;
   structuredQuiz?: StructuredQuizQuestion[];
+  lesson?: AiLesson;
   quality?: OutputQualityReport;
   debug?: AnalysisDebug;
 };
@@ -54,6 +58,7 @@ type AnalyzeResponse = {
   topics?: StudyTopic[];
   structuredSummary?: StudySummary;
   structuredQuiz?: StructuredQuizQuestion[];
+  lesson?: AiLesson;
   quality?: OutputQualityReport;
   debug?: AnalysisDebug;
   error?: string;
@@ -72,6 +77,12 @@ type AnalysisDebug = {
   quizQuestionCount: number;
   missingTopicCount: number;
   missingSourcePageCount: number;
+  lessonModuleCount?: number;
+  lessonBlockCount?: number;
+  missingCheckpointCount?: number;
+  missingModuleSourcePageCount?: number;
+  missingQuizModuleLinkCount?: number;
+  lessonQualityScore?: number;
   fallbackUsed: boolean;
   jsonParseError: boolean;
   aiAttempted: boolean;
@@ -95,7 +106,7 @@ type DepartmentOption = {
   scoreType?: string;
 };
 
-const wizardSteps = ["PDF Yükle", "AI Analiz", "Özet Çıkar", "Quiz Hazır"];
+const wizardSteps = ["PDF Yükle", "AI Analiz", "AI Ders", "Final Quiz"];
 const isDevelopment = process.env.NODE_ENV === "development";
 
 const demoPdfText = `
@@ -105,36 +116,6 @@ const demoPdfText = `
 
 [Sayfa 3] Network File System, or NFS, allows a remote file system to be mounted and used like a local directory. Students should distinguish local file access from network-based file access. Exams often ask why NFS is useful and what problems may occur when files are accessed over a network.
 `;
-
-const sampleCourses = [
-  {
-    title: "Veri Yapıları ve Algoritmalar",
-    pdfs: 12,
-    quizzes: 34,
-    success: 82,
-    lastStudy: "dün",
-    weakTopic: "Bağlı listeler",
-    accent: "orange",
-  },
-  {
-    title: "Makine Öğrenmesi",
-    pdfs: 7,
-    quizzes: 18,
-    success: 64,
-    lastStudy: "2 gün önce",
-    weakTopic: "Model doğrulama",
-    accent: "purple",
-  },
-  {
-    title: "Elektrik Devreleri",
-    pdfs: 5,
-    quizzes: 11,
-    success: 58,
-    lastStudy: "geçen hafta",
-    weakTopic: "Thevenin eşdeğeri",
-    accent: "blue",
-  },
-];
 
 const fallbackTopics = [
   "Veri Yapıları Temelleri",
@@ -171,6 +152,11 @@ export default function Home() {
   const [quizScope, setQuizScope] = useState<"all" | "latest">("all");
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, string>>({});
   const [reviewQuiz, setReviewQuiz] = useState<StudyQuizQuestion[] | null>(null);
+  const [activeModuleIndex, setActiveModuleIndex] = useState(0);
+  const [completedModuleIds, setCompletedModuleIds] = useState<string[]>([]);
+  const [moduleAssistMode, setModuleAssistMode] = useState<
+    "repeat" | "simple" | "example" | null
+  >(null);
 
   const currentDocument = documents[documents.length - 1];
   const baseQuiz = useMemo(
@@ -283,6 +269,9 @@ export default function Home() {
       setQuizIndex(0);
       setSelectedAnswers({});
       setReviewQuiz(null);
+      setActiveModuleIndex(0);
+      setCompletedModuleIds([]);
+      setModuleAssistMode(null);
       setScreen("course-ready");
     } catch (error) {
       setErrorMessage(formatAnalysisError(error));
@@ -323,6 +312,9 @@ export default function Home() {
       setQuizIndex(0);
       setSelectedAnswers({});
       setReviewQuiz(null);
+      setActiveModuleIndex(0);
+      setCompletedModuleIds([]);
+      setModuleAssistMode(null);
       setScreen("course-ready");
     } catch (error) {
       setErrorMessage(formatAnalysisError(error));
@@ -346,6 +338,7 @@ export default function Home() {
         topics: payload.topics,
         structuredSummary: payload.structuredSummary,
         structuredQuiz: payload.structuredQuiz,
+        lesson: payload.lesson,
         quality: payload.quality,
         debug: payload.debug,
       },
@@ -402,7 +395,36 @@ export default function Home() {
     setQuizScope("all");
     setSelectedAnswers({});
     setReviewQuiz(null);
+    setActiveModuleIndex(0);
+    setCompletedModuleIds([]);
+    setModuleAssistMode(null);
     setScreen("document-upload");
+  }
+
+  function completeActiveModule() {
+    const lesson = currentDocument?.lesson;
+    const lessonModule = lesson?.modules[activeModuleIndex];
+    if (!lesson || !lessonModule) return;
+
+    setCompletedModuleIds((ids) =>
+      ids.includes(lessonModule.id) ? ids : [...ids, lessonModule.id],
+    );
+    setModuleAssistMode(null);
+
+    if (activeModuleIndex + 1 < lesson.modules.length) {
+      setActiveModuleIndex(activeModuleIndex + 1);
+    }
+  }
+
+  function restartModule(moduleId: string) {
+    const lesson = currentDocument?.lesson;
+    const moduleIndex = lesson?.modules.findIndex((module) => module.id === moduleId) ?? -1;
+
+    if (moduleIndex >= 0) {
+      setActiveModuleIndex(moduleIndex);
+      setModuleAssistMode("repeat");
+      setScreen("course-ready");
+    }
   }
 
   function goDashboard() {
@@ -507,10 +529,22 @@ export default function Home() {
           <WizardFrame title={courseName || "Yeni Ders"} activeStep={3} onBack={() => setScreen("document-upload")}>
             <CourseReadyStep
               topics={topics}
+              lesson={currentDocument?.lesson}
+              activeModuleIndex={activeModuleIndex}
+              completedModuleIds={completedModuleIds}
+              moduleAssistMode={moduleAssistMode}
               summary={currentDocument?.summary}
               documentsCount={documents.length}
               onStudy={() => setScreen("study-chat")}
+              onModuleAssist={setModuleAssistMode}
+              onCompleteModule={completeActiveModule}
+              onRestartModule={restartModule}
               onQuiz={(scope) => {
+                const lesson = currentDocument?.lesson;
+                const isLessonComplete =
+                  !lesson ||
+                  lesson.modules.every((module) => completedModuleIds.includes(module.id));
+                if (!isLessonComplete) return;
                 setQuizScope(scope);
                 setReviewQuiz(null);
                 setQuizIndex(0);
@@ -588,7 +622,10 @@ export default function Home() {
               );
               setScreen("study-chat");
             }}
+            lesson={currentDocument?.lesson}
+            onReviewModule={restartModule}
             onReview={() => setScreen("summary-review")}
+            onNewDocument={() => setScreen("document-upload")}
             onDashboard={goDashboard}
           />
         )}
@@ -665,7 +702,7 @@ function AppSidebar({
         ))}
       </nav>
       <button className="new-course-button" onClick={onNewCourse}>
-        Yeni Ders Ekle
+        {hasDocuments ? "Yeni Ders Ekle" : "İlk PDF’ini Yükle"}
       </button>
       <div className="sidebar-user">
         <div className="avatar">A</div>
@@ -798,19 +835,26 @@ function AuthScreen({
           <div className="brand-mark">Ü</div>
           <strong>ÜniKEY</strong>
         </div>
-        <h1>PDF’lerini yükle. 5 dakikada sınava hazırlan.</h1>
+        <h1>PDF’lerini yükle. Sınava nasıl çalışacağını UniKEY söylesin.</h1>
         <p>
-          ÜniKEY yüklediğin ders notlarını analiz eder, özet çıkarır,
-          eksiklerini bulur ve aynı materyalden sana quiz hazırlar.
+          UniKEY ders notlarını analiz eder, önemli konuları çıkarır, quiz
+          hazırlar ve yanlışlarına göre tekrar planı oluşturur.
         </p>
         <div className="auth-preview">
           <span>1</span>
-          <strong>PDF yükle</strong>
+          <strong>İlk PDF’imi yükle</strong>
           <span>2</span>
-          <strong>AI özet çıkarsın</strong>
+          <strong>Özetini incele</strong>
           <span>3</span>
-          <strong>Quiz çöz</strong>
+          <strong>Yanlışlarını tekrar et</strong>
         </div>
+        <div className="trust-list">
+          <span>PDF’inden konu çıkarır</span>
+          <span>Sınav tarzı quiz üretir</span>
+          <span>Yanlışlarını analiz eder</span>
+          <span>Tekrar planı önerir</span>
+        </div>
+        <span className="landing-cta-label">İlk PDF’imi Yükle</span>
       </section>
 
       <section className="auth-card">
@@ -963,11 +1007,30 @@ function Dashboard({
 }) {
   const hasDocuments = documents.length > 0;
   const firstName = email.split("@")[0]?.split(/[._-]/)[0] || "Emir";
-  const uploadedPdfCount = hasDocuments ? documents.length : 12;
-  const quizCount = hasDocuments
-    ? documents.reduce((total, document) => total + document.quiz.length, 0)
-    : 48;
-  const successRate = hasDocuments ? 74 : 68;
+  const uploadedPdfCount = documents.length;
+  const quizCount = documents.reduce((total, document) => total + document.quiz.length, 0);
+  const averageQuality =
+    documents.length > 0
+      ? Math.round(
+          documents.reduce((total, document) => total + (document.quality?.score ?? 74), 0) /
+            documents.length,
+        )
+      : 0;
+  const latestDocument = documents.at(-1);
+  const latestWeakTopic = latestDocument?.keywords[0] ?? "Henüz konu analizi yok";
+  const realCourses = hasDocuments
+    ? [
+        {
+          title: courseName && courseName !== "Yeni Ders" ? courseName : "PDF Çalışma Dersi",
+          pdfs: uploadedPdfCount,
+          quizzes: quizCount,
+          success: averageQuality,
+          weakTopic: latestWeakTopic,
+          lastStudy: "az önce",
+          accent: "purple",
+        },
+      ]
+    : [];
 
   return (
     <div className="dashboard-page">
@@ -979,37 +1042,81 @@ function Dashboard({
             yükle, özet çıkar ve vize/final tarzı quiz çöz.
           </p>
         </div>
-        <button className="secondary-button" onClick={onContinue}>
-          Son Çalışmaya Devam Et
+        <button className="secondary-button" onClick={hasDocuments ? onContinue : onNewCourse}>
+          {hasDocuments ? "Son Çalışmaya Devam Et" : "İlk PDF’imi Yükle"}
         </button>
       </header>
 
-      <section className="dashboard-hero">
-        <button className="pdf-cta-card" onClick={onNewCourse}>
-          <span className="cta-kicker">PDF → Özet → Quiz</span>
-          <strong>PDF yükle ve sınav modunu başlat</strong>
-          <small>
-            Ders notunu seç; ÜniKEY önemli konuları çıkarır, anlaşılmayan yerleri
-            cevaplar ve quiz hazırlar.
-          </small>
-          <em>PDF YÜKLE</em>
-        </button>
-        <div className="coach-card">
-          <span>ÜniKEY Koçu</span>
-          <strong>Merhaba {titleCase(firstName)}. Finale 12 gün kaldı.</strong>
-          <p>
-            {courseName && courseName !== "Yeni Ders"
-              ? `${courseName} için bugün 18 dakikalık hedefli tekrar öneriyorum.`
-              : "Bugün 18 dakikalık hedefli tekrar öneriyorum."}
-          </p>
-          <ul>
-            <li>Ağaçlar: traversal sorularında hata riski yüksek.</li>
-            <li>Hash Table: çakışma çözümü tekrar edilmeli.</li>
-            <li>Graphlar: BFS/DFS ayrımı netleştirilmeli.</li>
-          </ul>
-          <button onClick={onContinue}>Koçla çalışmaya başla</button>
-        </div>
-      </section>
+      {!hasDocuments ? (
+        <section className="first-run-card">
+          <div>
+            <span>İlk kullanım</span>
+            <h2>İlk PDF’ini yükle</h2>
+            <p>
+              UniKEY senin için özet, quiz ve çalışma planı hazırlasın. İlk
+              dokümanı eklediğinde derslerin ve analizlerin burada görünür.
+            </p>
+            <div className="flow-strip">
+              <strong>PDF</strong>
+              <span>→</span>
+              <strong>Özet</strong>
+              <span>→</span>
+              <strong>Quiz</strong>
+              <span>→</span>
+              <strong>Yanlışlarını tekrar et</strong>
+            </div>
+          </div>
+          <div className="first-run-actions">
+            <button className="primary-button" onClick={onNewCourse}>
+              İlk PDF’imi Yükle
+            </button>
+            <div className="trust-list compact">
+              <span>PDF’inden konu çıkarır</span>
+              <span>Sınav tarzı quiz üretir</span>
+              <span>Yanlışlarını analiz eder</span>
+              <span>Tekrar planı önerir</span>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <section className="dashboard-hero">
+          <button className="pdf-cta-card" onClick={onNewCourse}>
+            <span className="cta-kicker">PDF → Özet → Quiz</span>
+            <strong>PDF yükle ve sınav modunu başlat</strong>
+            <small>
+              Ders notunu seç; ÜniKEY önemli konuları çıkarır, anlaşılmayan yerleri
+              cevaplar ve quiz hazırlar.
+            </small>
+            <em>PDF YÜKLE</em>
+          </button>
+          <div className="coach-card">
+            <span>ÜniKEY Koçu</span>
+            <strong>Merhaba {titleCase(firstName)}. Sıradaki adım: özeti incele.</strong>
+            <p>
+              {latestDocument
+                ? `${latestDocument.name} analiz edildi. Şimdi özetini kontrol edip quiz çözebilirsin.`
+                : "Dokümanını analiz ettikten sonra sana sıradaki adımı göstereceğim."}
+            </p>
+            <ul>
+              <li>{latestWeakTopic} konusu tekrar için öne çıkıyor.</li>
+              <li>Quizden sonra yanlış cevapların ayrıca analiz edilecek.</li>
+              <li>Yeni PDF ekledikçe ders resmi daha netleşir.</li>
+            </ul>
+            <button onClick={onContinue}>Özeti incele</button>
+          </div>
+        </section>
+      )}
+
+      <NextStepCard
+        title="Sonraki adım"
+        description={
+          hasDocuments
+            ? "PDF yüklendi. Şimdi özeti inceleyip quiz aşamasına geçebilirsin."
+            : "İlk PDF’ini yükle; UniKEY önce konuları çıkarıp sana çalışma akışını hazırlasın."
+        }
+        actionLabel={hasDocuments ? "Özeti İncele" : "İlk PDF’imi Yükle"}
+        onAction={hasDocuments ? onContinue : onNewCourse}
+      />
 
       <section className="study-metric-grid">
         <div>
@@ -1021,26 +1128,28 @@ function Dashboard({
           <span>Quiz sorusu</span>
         </div>
         <div>
-          <strong>%{successRate}</strong>
-          <span>Ortalama başarı</span>
+          <strong>{hasDocuments ? `%${averageQuality}` : "—"}</strong>
+          <span>Analiz kalite skoru</span>
         </div>
       </section>
 
-      <section className="today-plan-card">
-        <div>
-          <span>Bugünün planı</span>
-          <strong>18 dk tekrar · 8 quiz · 3 zayıf konu</strong>
-        </div>
-        <button onClick={onContinue}>Çalışmaya Başla</button>
-      </section>
+      {hasDocuments && (
+        <section className="today-plan-card">
+          <div>
+            <span>Bugünün planı</span>
+            <strong>Özeti incele · Quiz çöz · Yanlışlarını tekrar et</strong>
+          </div>
+          <button onClick={onContinue}>Çalışmaya Başla</button>
+        </section>
+      )}
 
       <section className="dashboard-section">
         <div className="section-title">
           <h2>Ders bazlı çalışma</h2>
-          <button>Tümünü gör</button>
+          {hasDocuments && <button>Tümünü gör</button>}
         </div>
         <div className="course-grid">
-          {sampleCourses.map((course) => (
+          {realCourses.map((course) => (
             <div key={course.title} className={`course-card ${course.accent}`}>
               <span>{course.title.slice(0, 2)}</span>
               <strong>{course.title}</strong>
@@ -1053,6 +1162,14 @@ function Dashboard({
               <em>Son çalışma: {course.lastStudy}</em>
             </div>
           ))}
+          {!hasDocuments && (
+            <EmptyStateCard
+              title="Henüz ders yok"
+              description="İlk PDF’ini yüklediğinde UniKEY ders başlığını, konuları ve çalışma akışını burada oluşturur."
+              actionLabel="PDF yükle"
+              onAction={onNewCourse}
+            />
+          )}
           <button className="add-course-card" onClick={onNewCourse}>
             <span>+</span>
             Yeni PDF / Ders Ekle
@@ -1065,23 +1182,23 @@ function Dashboard({
           <h2>Son yüklenen PDF’ler</h2>
           <button onClick={onNewCourse}>PDF ekle</button>
         </div>
-        <div>
-          {(documents.length > 0
-            ? documents.map((document) => ({
-                name: document.name,
-                detail: `${document.keywords.length || 8} konu çıkarıldı`,
-              }))
-            : [
-                { name: "Chapter15.pdf", detail: "8 konu çıkarıldı" },
-                { name: "VeriYapıları.pdf", detail: "34 quiz hazır" },
-              ]
-          ).slice(0, 3).map((document) => (
-            <p key={document.name}>
-              <strong>{document.name}</strong>
-              <span>{document.detail}</span>
-            </p>
-          ))}
-        </div>
+        {hasDocuments ? (
+          <div>
+            {documents.slice(-3).reverse().map((document) => (
+              <p key={document.name}>
+                <strong>{document.name}</strong>
+                <span>{document.keywords.length || 1} konu çıkarıldı</span>
+              </p>
+            ))}
+          </div>
+        ) : (
+          <EmptyStateCard
+            title="Henüz PDF yok"
+            description="PDF yüklediğinde dosya adı, çıkarılan konu sayısı ve quiz durumu burada listelenir."
+            actionLabel="İlk PDF’imi Yükle"
+            onAction={onNewCourse}
+          />
+        )}
       </section>
 
       <section className="quick-flow-card">
@@ -1092,6 +1209,52 @@ function Dashboard({
           <span>3. Yanlışlarına göre tekrar et</span>
         </div>
       </section>
+    </div>
+  );
+}
+
+function NextStepCard({
+  title,
+  description,
+  actionLabel,
+  onAction,
+  disabled = false,
+}: {
+  title: string;
+  description: string;
+  actionLabel: string;
+  onAction: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <section className="next-step-card">
+      <div>
+        <span>{title}</span>
+        <strong>{description}</strong>
+      </div>
+      <button onClick={onAction} disabled={disabled}>
+        {actionLabel}
+      </button>
+    </section>
+  );
+}
+
+function EmptyStateCard({
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="empty-state-card">
+      <strong>{title}</strong>
+      <p>{description}</p>
+      {actionLabel && onAction && <button onClick={onAction}>{actionLabel}</button>}
     </div>
   );
 }
@@ -1208,7 +1371,14 @@ function DocumentUploadStep({
 
   return (
     <section className="upload-page">
-      {errorMessage && <div className="error-banner">{errorMessage}</div>}
+      {errorMessage && (
+        <div className="error-banner">
+          {errorMessage}
+          <small>
+            PDF taranmış/görsel olabilir ya da metin çıkarılamamış olabilir. Metni seçilebilen bir PDF ile tekrar dene.
+          </small>
+        </div>
+      )}
       <div className="upload-context-card">
         <span>PDF-first akış</span>
         <strong>
@@ -1234,13 +1404,20 @@ function DocumentUploadStep({
       </label>
       <div className="uploaded-list">
         <h3>Yüklenen Dosyalar</h3>
-        {documents.map((document) => (
-          <div key={document.id} className="uploaded-item">
-            <span>PDF</span>
-            <p>{document.name}</p>
-            <small>{document.pageCount} sayfa</small>
-          </div>
-        ))}
+        {documents.length > 0 ? (
+          documents.map((document) => (
+            <div key={document.id} className="uploaded-item">
+              <span>PDF</span>
+              <p>{document.name}</p>
+              <small>{document.pageCount} sayfa</small>
+            </div>
+          ))
+        ) : (
+          <EmptyStateCard
+            title="Henüz PDF yok"
+            description="İlk PDF’ini seçtiğinde dosya burada görünür; analiz tamamlanınca özet ve quiz hazırlanır."
+          />
+        )}
         {selectedFile && (
           <div className="uploaded-item pending">
             <span>PDF</span>
@@ -1260,6 +1437,17 @@ function DocumentUploadStep({
           </div>
         </div>
       )}
+      <NextStepCard
+        title="Sonraki adım"
+        description={
+          selectedFile
+            ? "PDF seçildi. Şimdi özeti çıkarıp quiz hazırlama akışını başlatabilirsin."
+            : "Bir PDF seç; UniKEY önce metni okuyup konuları çıkaracak."
+        }
+        actionLabel={selectedFile ? "Özeti Çıkar" : "PDF bekleniyor"}
+        onAction={selectedFile ? onAnalyze : () => undefined}
+        disabled={!selectedFile}
+      />
       <button disabled={!selectedFile} onClick={onAnalyze} className="primary-button">
         Özeti Çıkar →
       </button>
@@ -1269,17 +1457,17 @@ function DocumentUploadStep({
 
 function SummaryProcessStep({ isUploading }: { isUploading: boolean }) {
   const steps = [
-    "Dokümanlar analiz ediliyor...",
-    "Önemli konular belirleniyor...",
-    "Özet oluşturuluyor...",
-    "Anahtar noktalar çıkarılıyor...",
-    "Quiz soruları hazırlanıyor...",
+    "PDF okunuyor...",
+    "Konular çıkarılıyor...",
+    "Ders modülleri hazırlanıyor...",
+    "Quiz oluşturuluyor...",
+    "Çalışma planı hazırlanıyor...",
   ];
 
   return (
     <section className="process-panel">
-      <h2>Akıllı Özet</h2>
-      <p>Yapay zeka dokümanlarını analiz ederek en önemli noktaları çıkarıyor.</p>
+      <h2>AI Ders hazırlanıyor</h2>
+      <p>PDF okunuyor; ardından modüller, kontrol noktaları ve final quiz hazırlanıyor.</p>
       <div className="process-list">
         {steps.map((step, index) => (
           <div key={step} className={index < 3 || !isUploading ? "done" : ""}>
@@ -1325,6 +1513,12 @@ function AiQualityDebugPanel({
           <span>Quiz: {debug.quizQuestionCount}</span>
           <span>Eksik topic: {debug.missingTopicCount}</span>
           <span>Eksik sayfa: {debug.missingSourcePageCount}</span>
+          <span>Modül: {debug.lessonModuleCount ?? 0}</span>
+          <span>Blok: {debug.lessonBlockCount ?? 0}</span>
+          <span>Checkpoint eksik: {debug.missingCheckpointCount ?? 0}</span>
+          <span>Modül sayfası eksik: {debug.missingModuleSourcePageCount ?? 0}</span>
+          <span>Quiz modül linki eksik: {debug.missingQuizModuleLinkCount ?? 0}</span>
+          <span>Lesson skoru: {debug.lessonQualityScore ?? debug.qualityScore}</span>
           <span>Fallback: {debug.fallbackUsed ? "evet" : "hayır"}</span>
           <span>JSON parse: {debug.jsonParseError ? "hatalı" : "temiz"}</span>
           <span>AI denendi: {debug.aiAttempted ? "evet" : "hayır"}</span>
@@ -1350,52 +1544,125 @@ function AiQualityDebugPanel({
 
 function CourseReadyStep({
   topics,
+  lesson,
+  activeModuleIndex,
+  completedModuleIds,
+  moduleAssistMode,
   summary,
   documentsCount,
   onStudy,
+  onModuleAssist,
+  onCompleteModule,
+  onRestartModule,
   onQuiz,
   onAddDocument,
   onFinish,
 }: {
   topics: string[];
+  lesson?: AiLesson;
+  activeModuleIndex: number;
+  completedModuleIds: string[];
+  moduleAssistMode: "repeat" | "simple" | "example" | null;
   summary?: string;
   documentsCount: number;
   onStudy: () => void;
+  onModuleAssist: (mode: "repeat" | "simple" | "example" | null) => void;
+  onCompleteModule: () => void;
+  onRestartModule: (moduleId: string) => void;
   onQuiz: (scope: "all" | "latest") => void;
   onAddDocument: () => void;
   onFinish: () => void;
 }) {
+  const modules = lesson?.modules ?? [];
+  const activeModule = modules[activeModuleIndex];
+  const isLessonComplete =
+    modules.length === 0 ||
+    modules.every((module) => completedModuleIds.includes(module.id));
+
   return (
     <section className="ready-panel">
-      <h2>Özet Hazır!</h2>
-      <p>Dokümanların başarıyla analiz edildi. Bu derste öne çıkan konular:</p>
-      {summary && (
+      <h2>AI Ders Hazır!</h2>
+      <p>PDF analiz edildi. UniKEY şimdi konuyu modül modül anlatacak.</p>
+      <NextStepCard
+        title="Sonraki adım"
+        description={
+          isLessonComplete
+            ? "Tüm modüller tamamlandı. Şimdi final quiz ile konuyu ölçebilirsin."
+            : activeModule
+              ? `${activeModule.title} modülünü tamamla; sonra sıradaki modül açılacak.`
+              : "Ders modülü üretilemedi. Özet fallback üzerinden çalışmaya devam edebilirsin."
+        }
+        actionLabel={isLessonComplete ? "Final Quiz Çöz" : "Derse Devam Et"}
+        onAction={() => {
+          if (isLessonComplete) onQuiz("all");
+        }}
+        disabled={!isLessonComplete}
+      />
+      {lesson ? (
+        <LessonEnginePanel
+          lesson={lesson}
+          activeModuleIndex={activeModuleIndex}
+          completedModuleIds={completedModuleIds}
+          moduleAssistMode={moduleAssistMode}
+          onModuleAssist={onModuleAssist}
+          onCompleteModule={onCompleteModule}
+          onRestartModule={onRestartModule}
+        />
+      ) : summary ? (
         <article className="summary-preview">
-          <h3>Akıllı Özet</h3>
+          <h3>AI Ders fallback özeti</h3>
           <SummaryCards summary={summary} />
         </article>
+      ) : null}
+      <h3>Ders planındaki konu başlıkları</h3>
+      {modules.length > 0 ? (
+        <div className="topic-grid">
+          {modules.map((module, index) => (
+            <div
+              key={module.id}
+              className={completedModuleIds.includes(module.id) ? "completed" : ""}
+            >
+              <span>{index + 1}</span>
+              {module.title}
+            </div>
+          ))}
+        </div>
+      ) : topics.length > 0 ? (
+        <div className="topic-grid">
+          {topics.map((topic, index) => (
+            <div key={topic}>
+              <span>{index + 1}</span>
+              {topic}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyStateCard
+          title="Konu bulunamadı"
+          description="PDF metni okunmuş olabilir ama öğretilebilir konu başlıkları çıkarılamadı. Farklı bir PDF ile tekrar deneyebilirsin."
+        />
       )}
-      <div className="topic-grid">
-        {topics.map((topic, index) => (
-          <div key={topic}>
-            <span>{index + 1}</span>
-            {topic}
-          </div>
-        ))}
-      </div>
       <h3>Ne yapmak istersin?</h3>
       <div className="ready-actions">
         <button className="green-button" onClick={onStudy}>
           Anlamadığım Noktaları Sor
         </button>
-        <button className="primary-button" onClick={() => onQuiz("all")}>
-          Evet, Quizi Hazırla
+        <button
+          className="primary-button"
+          onClick={() => onQuiz("all")}
+          disabled={!isLessonComplete}
+        >
+          {isLessonComplete ? "Final Quizi Başlat" : "Quiz için modülleri tamamla"}
         </button>
         <button className="blue-button" onClick={onAddDocument}>
           Hayır, Daha Fazla Doküman Ekle
         </button>
         {documentsCount > 1 && (
-          <button className="secondary-button" onClick={() => onQuiz("latest")}>
+          <button
+            className="secondary-button"
+            onClick={() => onQuiz("latest")}
+            disabled={!isLessonComplete}
+          >
             Sadece Bu PDF İçin Quiz Üret
           </button>
         )}
@@ -1404,6 +1671,117 @@ function CourseReadyStep({
         </button>
       </div>
     </section>
+  );
+}
+
+function LessonEnginePanel({
+  lesson,
+  activeModuleIndex,
+  completedModuleIds,
+  moduleAssistMode,
+  onModuleAssist,
+  onCompleteModule,
+  onRestartModule,
+}: {
+  lesson: AiLesson;
+  activeModuleIndex: number;
+  completedModuleIds: string[];
+  moduleAssistMode: "repeat" | "simple" | "example" | null;
+  onModuleAssist: (mode: "repeat" | "simple" | "example" | null) => void;
+  onCompleteModule: () => void;
+  onRestartModule: (moduleId: string) => void;
+}) {
+  const activeModule = lesson.modules[activeModuleIndex] ?? lesson.modules[0];
+  const completedCount = lesson.modules.filter((module) =>
+    completedModuleIds.includes(module.id),
+  ).length;
+  const isLastModule = activeModuleIndex >= lesson.modules.length - 1;
+
+  return (
+    <article className="lesson-engine-card">
+      <header className="lesson-plan-header">
+        <div>
+          <small>AI Lesson Engine</small>
+          <h3>{lesson.lessonTitle}</h3>
+          <p>
+            {lesson.modules.length} modül · yaklaşık {lesson.estimatedTotalMinutes} dakika ·{" "}
+            {lessonDifficultyLabel(lesson.difficulty)}
+          </p>
+        </div>
+        <strong>
+          {completedCount}/{lesson.modules.length} modül tamamlandı
+        </strong>
+      </header>
+
+      <div className="lesson-module-list">
+        {lesson.modules.map((module, index) => {
+          const isCompleted = completedModuleIds.includes(module.id);
+          const isActive = module.id === activeModule.id;
+          const isLocked = !isCompleted && !isActive && index > activeModuleIndex;
+
+          return (
+            <button
+              key={module.id}
+              className={isActive ? "active" : isCompleted ? "completed" : ""}
+              onClick={() => {
+                if (isCompleted || isActive) onRestartModule(module.id);
+              }}
+              disabled={isLocked}
+            >
+              <span>{isCompleted ? "✓" : isLocked ? "Kilitli" : "Aktif"}</span>
+              <strong>{module.title}</strong>
+              <small>{module.estimatedMinutes} dk · PDF sayfa {module.sourcePages.join(", ")}</small>
+            </button>
+          );
+        })}
+      </div>
+
+      {activeModule ? (
+        <section className="lesson-active-module">
+          <div className="lesson-active-head">
+            <div>
+              <small>Aktif modül</small>
+              <h3>{activeModule.title}</h3>
+            </div>
+            <span>{activeModule.estimatedMinutes} dk</span>
+          </div>
+          <div className="lesson-goals">
+            {activeModule.learningGoals.slice(0, 3).map((goal) => (
+              <span key={goal}>{goal}</span>
+            ))}
+          </div>
+          {moduleAssistMode && (
+            <div className="lesson-assist-note">
+              <strong>{assistModeTitle(moduleAssistMode)}</strong>
+              <p>{assistModeText(moduleAssistMode, activeModule)}</p>
+            </div>
+          )}
+          <div className="lesson-block-list">
+            {activeModule.blocks.map((block, index) => (
+              <section key={`${block.type}-${index}`} className={`lesson-block ${block.type}`}>
+                <small>{lessonBlockLabel(block.type)}</small>
+                <h4>{block.title}</h4>
+                <p>{block.content}</p>
+                {block.question && <em>{block.question}</em>}
+              </section>
+            ))}
+          </div>
+          <div className="lesson-checkpoint-actions">
+            <button onClick={() => onModuleAssist("repeat")}>Tekrar anlat</button>
+            <button onClick={() => onModuleAssist("simple")}>Daha basit anlat</button>
+            <button onClick={() => onModuleAssist("example")}>Örnek ver</button>
+            <button className="primary-button" onClick={onCompleteModule}>
+              {isLastModule ? "Anladım, dersi tamamla" : "Anladım, sonraki modüle geç"}
+            </button>
+          </div>
+        </section>
+      ) : (
+        <EmptyStateCard
+          title="Modül bulunamadı"
+          description="AI Ders planı boş geldi. Eski özet ve quiz fallback akışıyla devam edebilirsin."
+        />
+      )}
+    </article>
   );
 }
 
@@ -1520,14 +1898,11 @@ function QuizScreen({
   if (!question) {
     return (
       <WizardFrame title={courseName} activeStep={3} onBack={onBack}>
-        <CourseReadyStep
-          topics={topics}
-          summary={undefined}
-          documentsCount={0}
-          onStudy={onBack}
-          onQuiz={() => onBack()}
-          onAddDocument={onBack}
-          onFinish={onBack}
+        <EmptyStateCard
+          title="Quiz henüz hazır değil"
+          description="Quiz sorusu oluşmadıysa önce PDF analizini tamamla ya da yeni bir PDF yükle."
+          actionLabel="PDF yüklemeye dön"
+          onAction={onBack}
         />
       </WizardFrame>
     );
@@ -1593,29 +1968,49 @@ function QuizResult({
   topics,
   quiz,
   selectedAnswers,
+  lesson,
   onMoreQuiz,
   onRetryMistakes,
   onReviewWeak,
   onReviewMistake,
+  onReviewModule,
   onReview,
+  onNewDocument,
   onDashboard,
 }: {
   topics: string[];
   quiz: StudyQuizQuestion[];
   selectedAnswers: Record<number, string>;
+  lesson?: AiLesson;
   onMoreQuiz: () => void;
   onRetryMistakes: () => void;
   onReviewWeak: (weakTopics: string[]) => void;
   onReviewMistake: (mistake: WrongAnswerAnalysis) => void;
+  onReviewModule: (moduleId: string) => void;
   onReview: () => void;
+  onNewDocument: () => void;
   onDashboard: () => void;
 }) {
+  if (quiz.length === 0) {
+    return (
+      <div className="result-page">
+        <EmptyStateCard
+          title="Sonuç yok"
+          description="Sonuç analizi için önce bir quiz çözmen gerekiyor."
+          actionLabel="Ana sayfaya dön"
+          onAction={onDashboard}
+        />
+      </div>
+    );
+  }
+
   const resultAnalysis = buildQuizResultAnalysis(quiz, selectedAnswers, topics);
   const score = resultAnalysis.score;
   const weakTopics = resultAnalysis.weakTopics;
   const strongTopics = resultAnalysis.strongTopics;
   const displayedTopics = [...strongTopics, ...weakTopics].slice(0, 4);
   const hasMistakes = resultAnalysis.wrongAnswers.length > 0;
+  const weakModules = resolveWeakModules(lesson, quiz, resultAnalysis.wrongAnswers);
 
   return (
     <div className="result-page">
@@ -1670,6 +2065,16 @@ function QuizResult({
             <span>Yanlış cevap yok. İstersen daha zor sorularla devam edebilirsin.</span>
           )}
         </div>
+        {weakModules.length > 0 && (
+          <div className="weak-module-card">
+            <strong>Tekrar edilecek modüller</strong>
+            {weakModules.map((module) => (
+              <button key={module.id} onClick={() => onReviewModule(module.id)}>
+                Şu modülü tekrar et: {module.title}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="recommended-repeat">
           <strong>Önerilen tekrar</strong>
           <p>{resultAnalysis.coachMessage}</p>
@@ -1680,6 +2085,16 @@ function QuizResult({
       </section>
       <section className="next-card">
         <h3>Ne yapmak istersin?</h3>
+        <NextStepCard
+          title="Sonraki adım"
+          description={
+            hasMistakes
+              ? "Quiz bitti. Şimdi yanlış yaptığın konuları tekrar ederek pekiştir."
+              : "Quiz bitti. İstersen yeni PDF yükleyip çalışma setini genişlet."
+          }
+          actionLabel={hasMistakes ? "Yanlışları tekrar et" : "Yeni PDF yükle"}
+          onAction={hasMistakes ? onRetryMistakes : onNewDocument}
+        />
         <button onClick={onRetryMistakes} disabled={!hasMistakes}>
           Yanlışları Tekrar Et
         </button>
@@ -1824,6 +2239,81 @@ function titleCase(value: string) {
     .replaceAll("Pdf", "PDF")
     .replaceAll("Ai", "AI")
     .replaceAll(" İs ", " is ");
+}
+
+function lessonDifficultyLabel(difficulty: AiLesson["difficulty"]) {
+  const labels: Record<AiLesson["difficulty"], string> = {
+    beginner: "başlangıç",
+    intermediate: "orta seviye",
+    advanced: "ileri seviye",
+  };
+
+  return labels[difficulty];
+}
+
+function lessonBlockLabel(type: LessonBlockType) {
+  const labels: Record<LessonBlockType, string> = {
+    intro: "Bu modülde",
+    analogy: "Analoji",
+    core_explanation: "Ana anlatım",
+    example: "Örnek",
+    formula: "Neden böyle?",
+    mini_summary: "Mini özet",
+    checkpoint: "Kontrol noktası",
+  };
+
+  return labels[type];
+}
+
+function assistModeTitle(mode: "repeat" | "simple" | "example") {
+  const titles = {
+    repeat: "Aynı konuyu tekrar açalım",
+    simple: "Daha basit anlatım",
+    example: "Ek örnek",
+  };
+
+  return titles[mode];
+}
+
+function assistModeText(mode: "repeat" | "simple" | "example", module: LessonModule) {
+  if (mode === "simple") {
+    return `${module.title} için en kısa yol şu: önce bu kavramın hangi problemi çözdüğünü düşün. Sonra PDF'teki örneğe dönüp "burada neyi kolaylaştırıyor?" sorusunu sor.`;
+  }
+
+  if (mode === "example") {
+    return `${module.title} sınavda genellikle "nedir, ne işe yarar, kısa örnek ver" şeklinde gelir. Cevabını önce tek cümle tanım, sonra küçük örnek şeklinde kur.`;
+  }
+
+  return `${module.title} modülünü tekrar ederken öğrenme hedeflerini sırayla kontrol et: ${module.learningGoals.slice(0, 2).join(" ")}.`;
+}
+
+function resolveWeakModules(
+  lesson: AiLesson | undefined,
+  quiz: StudyQuizQuestion[],
+  wrongAnswers: WrongAnswerAnalysis[],
+) {
+  if (!lesson) return [];
+
+  const wrongTopicSet = new Set(wrongAnswers.map((answer) => answer.topic));
+  const moduleIds = new Set(
+    quiz
+      .filter((question) => question.topic && wrongTopicSet.has(question.topic))
+      .map((question) => question.moduleId)
+      .filter(Boolean),
+  );
+  const directModules = lesson.modules.filter((module) => moduleIds.has(module.id));
+
+  if (directModules.length > 0) return directModules.slice(0, 3);
+
+  return lesson.modules
+    .filter((module) =>
+      wrongAnswers.some((answer) => {
+        const topic = answer.topic.toLocaleLowerCase("tr");
+        const title = module.title.toLocaleLowerCase("tr");
+        return topic.includes(title) || title.includes(topic);
+      }),
+    )
+    .slice(0, 3);
 }
 
 function humanizeTopic(topic: string) {

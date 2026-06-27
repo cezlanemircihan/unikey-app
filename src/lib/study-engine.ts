@@ -9,6 +9,7 @@ export type QuizQuestion = {
   source: string;
   explanation?: string;
   topic?: string;
+  moduleId?: string;
   difficulty?: QuizDifficulty;
   sourcePage?: number;
 };
@@ -43,8 +44,55 @@ export type StructuredQuizQuestion = {
   correctAnswer: string;
   explanation: string;
   topic: string;
+  moduleId?: string;
   difficulty: QuizDifficulty;
   sourcePage: number;
+};
+
+export type LessonDifficulty = "beginner" | "intermediate" | "advanced";
+
+export type LessonModuleStatus = "locked" | "active" | "completed";
+
+export type LessonBlockType =
+  | "intro"
+  | "analogy"
+  | "core_explanation"
+  | "example"
+  | "formula"
+  | "mini_summary"
+  | "checkpoint";
+
+export type LessonBlock = {
+  type: LessonBlockType;
+  title: string;
+  content: string;
+  question: string | null;
+  options: string[] | null;
+  correctAnswer: string | null;
+  explanation: string | null;
+};
+
+export type LessonModule = {
+  id: string;
+  title: string;
+  estimatedMinutes: number;
+  learningGoals: string[];
+  prerequisites: string[];
+  sourcePages: number[];
+  status: LessonModuleStatus;
+  blocks: LessonBlock[];
+};
+
+export type AiLesson = {
+  lessonTitle: string;
+  courseTitle: string;
+  estimatedTotalMinutes: number;
+  difficulty: LessonDifficulty;
+  modules: LessonModule[];
+  finalQuiz: {
+    availableAfterModulesCompleted: true;
+    questionCount: number;
+  };
 };
 
 export type QuizResultAnalysis = {
@@ -84,6 +132,11 @@ export type OutputQualityReport = {
     quizTopicsComplete: boolean;
     quizSourcePagesComplete: boolean;
     weakTopicsReady: boolean;
+    lessonModulesReady: boolean;
+    lessonBlocksComplete: boolean;
+    lessonCheckpointsReady: boolean;
+    lessonSourcePagesComplete: boolean;
+    quizModuleLinksComplete: boolean;
   };
   warnings: string[];
 };
@@ -512,6 +565,59 @@ export function buildSummary(text: string, courseName: string) {
   return formatStructuredSummary(buildStructuredSummary(text, courseName));
 }
 
+export function buildLesson(text: string, courseName: string): AiLesson {
+  const topics = buildTopics(text, 6);
+  const usableTopics =
+    topics.length > 0
+      ? topics
+      : [
+          {
+            title: "PDF'in Ana Mantığı",
+            shortDescription:
+              "Bu dokümandaki ana fikri parçalara ayırıp sınav öncesi anlaşılır hale getirir.",
+            whyImportant:
+              "Konu başlıkları net çıkmasa bile öğrenciye adım adım çalışma yolu vermek gerekir.",
+            examLikelihood: "medium" as const,
+            sourcePages: [1],
+          },
+        ];
+  const modules = usableTopics.slice(0, 5).map((topic, index) =>
+    buildLessonModule(topic, courseName, index),
+  );
+
+  return {
+    lessonTitle: `${courseName} AI Dersi`,
+    courseTitle: courseName,
+    estimatedTotalMinutes: modules.reduce(
+      (total, module) => total + module.estimatedMinutes,
+      0,
+    ),
+    difficulty: inferLessonDifficulty(usableTopics),
+    modules,
+    finalQuiz: {
+      availableAfterModulesCompleted: true,
+      questionCount: Math.max(4, Math.min(10, modules.length + 2)),
+    },
+  };
+}
+
+export function attachQuizToLesson(
+  quiz: QuizQuestion[],
+  lesson: AiLesson,
+): QuizQuestion[] {
+  if (lesson.modules.length === 0) return quiz;
+
+  return quiz.map((question, index) => {
+    const lessonModule = findModuleForTopic(lesson, question.topic, index);
+
+    return {
+      ...question,
+      moduleId: question.moduleId ?? lessonModule.id,
+      topic: question.topic ?? lessonModule.title,
+    };
+  });
+}
+
 export function answerFromText(text: string, question: string) {
   const sentences = splitSentences(text);
   const questionWords = new Set(extractKeywords(question, 8));
@@ -588,6 +694,7 @@ export function buildQuiz(text: string, courseName: string): QuizQuestion[] {
     source: question.explanation,
     explanation: question.explanation,
     topic: question.topic,
+    moduleId: question.moduleId,
     difficulty: question.difficulty,
     sourcePage: question.sourcePage,
   }));
@@ -700,10 +807,12 @@ export function calculateOutputQuality({
   topics,
   summary,
   quiz,
+  lesson,
 }: {
   topics: StudyTopic[];
   summary: StudySummary;
   quiz: QuizQuestion[];
+  lesson?: AiLesson;
 }): OutputQualityReport {
   const checks = {
     naturalTopicTitles:
@@ -738,20 +847,51 @@ export function calculateOutputQuality({
     weakTopicsReady:
       quiz.length > 0 &&
       quiz.some((question) => sanitizeLearningText(question.topic).length > 3),
+    lessonModulesReady:
+      Boolean(lesson) && (lesson?.modules.length ?? 0) > 0,
+    lessonBlocksComplete:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every(
+        (module) =>
+          module.blocks.length >= 5 &&
+          module.blocks.some((block) => block.type === "core_explanation") &&
+          module.blocks.some((block) => block.type === "mini_summary"),
+      ),
+    lessonCheckpointsReady:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) =>
+        module.blocks.some(
+          (block) =>
+            block.type === "checkpoint" &&
+            sanitizeLearningText(block.question ?? block.content).length > 20,
+        ),
+      ),
+    lessonSourcePagesComplete:
+      Boolean(lesson) &&
+      (lesson?.modules ?? []).every((module) => module.sourcePages.length > 0),
+    quizModuleLinksComplete:
+      quiz.length > 0 &&
+      quiz.every((question) => sanitizeLearningText(question.moduleId).length > 0),
   };
   const weights: Record<keyof OutputQualityReport["checks"], number> = {
-    naturalTopicTitles: 15,
-    topicDescriptionsComplete: 15,
-    summaryMustKnowComplete: 15,
-    summaryFieldsComplete: 15,
-    quizExplanationsComplete: 15,
-    quizTopicsComplete: 10,
-    quizSourcePagesComplete: 10,
+    naturalTopicTitles: 10,
+    topicDescriptionsComplete: 10,
+    summaryMustKnowComplete: 8,
+    summaryFieldsComplete: 8,
+    quizExplanationsComplete: 10,
+    quizTopicsComplete: 8,
+    quizSourcePagesComplete: 7,
     weakTopicsReady: 5,
+    lessonModulesReady: 10,
+    lessonBlocksComplete: 8,
+    lessonCheckpointsReady: 8,
+    lessonSourcePagesComplete: 5,
+    quizModuleLinksComplete: 3,
   };
-  const score = Object.entries(checks).reduce((total, [key, passed]) => {
+  const rawScore = Object.entries(checks).reduce((total, [key, passed]) => {
     return total + (passed ? weights[key as keyof typeof checks] : 0);
   }, 0);
+  const score = Math.min(100, rawScore);
   const warnings = Object.entries(checks)
     .filter(([, passed]) => !passed)
     .map(([key]) => qualityWarningFor(key as keyof typeof checks));
@@ -905,9 +1045,109 @@ function qualityWarningFor(key: keyof OutputQualityReport["checks"]) {
     quizTopicsComplete: "Bazı quiz sorularında topic bilgisi eksik.",
     quizSourcePagesComplete: "Bazı quiz sorularında kaynak sayfa bilgisi eksik.",
     weakTopicsReady: "Quiz sonucu zayıf konu analizi için yeterli topic verisi yok.",
+    lessonModulesReady: "AI Ders modülleri oluşturulamadı.",
+    lessonBlocksComplete: "Bazı ders modüllerinde öğretici bloklar eksik.",
+    lessonCheckpointsReady: "Bazı ders modüllerinde kontrol noktası eksik.",
+    lessonSourcePagesComplete: "Bazı ders modüllerinde kaynak sayfa bilgisi eksik.",
+    quizModuleLinksComplete: "Bazı quiz soruları ders modüllerine bağlanmamış.",
   };
 
   return warnings[key];
+}
+
+function buildLessonModule(
+  topic: StudyTopic,
+  courseName: string,
+  index: number,
+): LessonModule {
+  const sourcePages = topic.sourcePages.length > 0 ? topic.sourcePages : [1];
+  const coreExplanation = explainTopic(topic.title, topic.shortDescription);
+  const estimatedMinutes = topic.examLikelihood === "high" ? 10 : 8;
+
+  return {
+    id: slugifyLessonId(topic.title, index),
+    title: topic.title,
+    estimatedMinutes,
+    learningGoals: [
+      `${topic.title} konusunun ne anlattığını açıklayabilmek`,
+      "Bu konunun sınavda hangi soru tipine dönebileceğini görmek",
+      "Tanım ezberi yerine neden-sonuç ilişkisini kurmak",
+    ],
+    prerequisites:
+      index === 0
+        ? ["PDF'teki temel kavramları takip etmeye hazır olmak"]
+        : ["Önceki modülün ana fikrini anlamış olmak"],
+    sourcePages,
+    status: index === 0 ? "active" : "locked",
+    blocks: [
+      {
+        type: "intro",
+        title: "Bu modülde öğreneceğiz",
+        content: `${courseName} içinde bu modül, ${topic.title} başlığını parçalara ayırır. Hedefimiz kavramı ezberlemek değil; hangi problemi çözdüğünü ve sınavda nasıl kullanılacağını görmek.`,
+        question: null,
+        options: null,
+        correctAnswer: null,
+        explanation: null,
+      },
+      {
+        type: "analogy",
+        title: "Gerçek hayat analojisi",
+        content: buildAnalogy(topic.title),
+        question: null,
+        options: null,
+        correctAnswer: null,
+        explanation: null,
+      },
+      {
+        type: "core_explanation",
+        title: "Ana anlatım",
+        content: `${coreExplanation} ${topic.shortDescription} Bu başlık önemli çünkü ${topic.whyImportant.toLocaleLowerCase("tr")} Sınavda genellikle tanım, amaç ve kısa örnek üzerinden ölçülür.`,
+        question: null,
+        options: null,
+        correctAnswer: null,
+        explanation: null,
+      },
+      {
+        type: "example",
+        title: "Örnek",
+        content: buildLessonExample(topic.title),
+        question: null,
+        options: null,
+        correctAnswer: null,
+        explanation: null,
+      },
+      {
+        type: "formula",
+        title: "Kural varsa: neden böyle?",
+        content: buildRuleExplanation(topic.title),
+        question: null,
+        options: null,
+        correctAnswer: null,
+        explanation: null,
+      },
+      {
+        type: "mini_summary",
+        title: "Mini özet",
+        content: `${topic.title} için akılda kalacak cümle: ${coreExplanation} Kaynak: PDF sayfa ${sourcePages.join(", ")}.`,
+        question: null,
+        options: null,
+        correctAnswer: null,
+        explanation: null,
+      },
+      {
+        type: "checkpoint",
+        title: "Kontrol noktası",
+        content:
+          "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?",
+        question:
+          "Buraya kadar kafana yatmayan, havada kalan veya tekrar etmemi istediğin bir yer var mı?",
+        options: null,
+        correctAnswer: null,
+        explanation:
+          "İstersen aynı modülü daha basit anlatabilir, örnek ekleyebilir veya sonraki modüle geçebilirsin.",
+      },
+    ],
+  };
 }
 
 function buildQuestionForTopic(
@@ -1056,6 +1296,124 @@ function buildQuestionForTopic(
     difficulty,
     sourcePage: firstSourcePage(topic),
   };
+}
+
+function inferLessonDifficulty(topics: StudyTopic[]): LessonDifficulty {
+  const highCount = topics.filter((topic) => topic.examLikelihood === "high").length;
+
+  if (highCount >= 3) return "advanced";
+  if (highCount >= 1 || topics.length >= 4) return "intermediate";
+  return "beginner";
+}
+
+function findModuleForTopic(lesson: AiLesson, topic: string | undefined, index: number) {
+  const normalizedTopic = normalizeTechLower(topic ?? "");
+  const exactMatch = lesson.modules.find(
+    (module) => normalizeTechLower(module.title) === normalizedTopic,
+  );
+  const looseMatch = lesson.modules.find((module) => {
+    const normalizedTitle = normalizeTechLower(module.title);
+    return (
+      normalizedTopic.includes(normalizedTitle) ||
+      normalizedTitle.includes(normalizedTopic) ||
+      module.learningGoals.some((goal) =>
+        normalizeTechLower(goal).includes(normalizedTopic),
+      )
+    );
+  });
+
+  return exactMatch ?? looseMatch ?? lesson.modules[index % lesson.modules.length];
+}
+
+function slugifyLessonId(title: string, index: number) {
+  const slug = normalizeTechLower(title)
+    .replace(/[^a-z0-9çğıöşü]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 42);
+
+  return `modul-${index + 1}-${slug || "ders"}`;
+}
+
+function buildAnalogy(title: string) {
+  const normalized = normalizeTechLower(title);
+
+  if (normalized.includes("unix dosya sistemi")) {
+    return "Bunu büyük bir kütüphane gibi düşün: kitaplar dosyalar, raflar dizinler, giriş kapısı da kök dizindir. Bir kitabı bulmak için raf yolunu bilmen gerekir.";
+  }
+
+  if (normalized.includes("working directory")) {
+    return "Bir binada bulunduğun kat gibi düşünebilirsin. Aynı oda numarası, hangi katta olduğuna göre farklı yere götürebilir; göreli path de mevcut dizine göre anlam kazanır.";
+  }
+
+  if (normalized.includes("everything is a file")) {
+    return "Tek tip priz sistemi gibi düşün: farklı cihazlar olabilir ama hepsi aynı priz standardıyla bağlanır. UNIX de farklı kaynaklara benzer dosya işlemleriyle yaklaşır.";
+  }
+
+  if (normalized.includes("nfs")) {
+    return "Buluttaki bir klasörü bilgisayarındaki klasörmüş gibi açmak gibidir. Dosya uzaktadır ama sen yereldeymiş gibi kullanırsın.";
+  }
+
+  if (normalized.includes("socket")) {
+    return "Socket'i iki kişi arasındaki telefon hattı gibi düşün. Konuşmanın kendisi veri, hat ise iki programın bağlandığı iletişim noktasıdır.";
+  }
+
+  if (normalized.includes("tcp")) {
+    return "TCP, kargoyu takip numarasıyla göndermek gibidir: parçalar sırayla gelsin, kaybolan olursa fark edilsin ve iletişim güvenilir olsun ister.";
+  }
+
+  if (normalized.includes("port") || normalized.includes("adres")) {
+    return "IP adresi apartmanı, port numarası da daire numarasını gösterir. Veri doğru binaya geldikten sonra doğru uygulamaya port ile ulaşır.";
+  }
+
+  return "Bu konuyu bir harita gibi düşün: kavramlar tek tek ezberlenecek duraklar değil, sınav sorusunu çözerken hangi yöne gideceğini gösteren işaretlerdir.";
+}
+
+function buildLessonExample(title: string) {
+  const normalized = normalizeTechLower(title);
+
+  if (normalized.includes("working directory")) {
+    return "`reports/final.pdf` gibi bir yol yazdığında sistem bu dosyayı mevcut çalışma dizininin altında arar. Bu yüzden komutun nerede çalıştığı sonucu değiştirir.";
+  }
+
+  if (normalized.includes("everything is a file")) {
+    return "Bir terminal veya aygıt dosyası doğrudan klasik metin dosyası değildir; ama sistem onu açma, okuma, yazma gibi dosya benzeri işlemlerle yönetebilir.";
+  }
+
+  if (normalized.includes("nfs")) {
+    return "Laboratuvardaki bir sunucudaki ders klasörü kendi bilgisayarında `/mnt/course` altında görünüyorsa, NFS benzeri bir mantıkla uzak dosya yerel gibi kullanılabilir.";
+  }
+
+  if (normalized.includes("socket")) {
+    return "Bir web tarayıcısı sunucuya bağlandığında iki taraf arasında socket uçları oluşur; istek ve cevap bu uçlar üzerinden akar.";
+  }
+
+  if (normalized.includes("tcp")) {
+    return "Dosya indirirken parçalar sırayla gelir ve eksik parça olursa tekrar istenir. TCP'nin güvenilirlik mantığı bunu sağlar.";
+  }
+
+  if (normalized.includes("port") || normalized.includes("adres")) {
+    return "Aynı bilgisayarda web sunucusu 80/443 portunda, başka bir servis farklı portta çalışabilir. Port, verinin hangi servise gideceğini ayırır.";
+  }
+
+  return "Sınavda bu konu genellikle kısa bir tanım ve ardından 'ne işe yarar?' sorusuyla gelir. Cevap verirken önce amacı, sonra örneği söylemek güçlü olur.";
+}
+
+function buildRuleExplanation(title: string) {
+  const normalized = normalizeTechLower(title);
+
+  if (normalized.includes("tcp")) {
+    return "Kuralın arkasındaki mantık güvenilirliktir: veri parçalara ayrıldığı için sıra, onay ve hata kontrolü olmazsa iki taraf aynı şeyi gördüğünden emin olamaz.";
+  }
+
+  if (normalized.includes("port") || normalized.includes("adres")) {
+    return "Adres ve port ayrı tutulur çünkü önce makineyi, sonra o makinedeki uygulamayı seçmek gerekir. Bu ayrım olmazsa gelen veri doğru programa yönlenemez.";
+  }
+
+  if (normalized.includes("working directory")) {
+    return "Göreli path'lerin çalışma dizinine bağlı olması komutları kısa yazmayı sağlar; ama dizin değişirse aynı komut farklı dosyayı hedefleyebilir.";
+  }
+
+  return "Bu modülde özel bir formül yoksa bile temel kural şu: kavramın adını değil, hangi problemi çözdüğünü ve hangi durumda kullanıldığını hatırla.";
 }
 
 function buildDistractors(title: string, allTopics: StudyTopic[]) {

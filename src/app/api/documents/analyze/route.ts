@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import {
+  attachQuizToLesson,
+  buildLesson,
   buildQuiz,
   buildSummary,
   buildTopics,
@@ -36,13 +38,15 @@ export async function POST(request: Request) {
     const localTopics = buildTopics(text, 10);
     const localStructuredSummary = buildStructuredSummary(text, courseName);
     const localStructuredQuiz = buildStructuredQuiz(text, courseName);
+    const localLesson = buildLesson(text, courseName);
     const localPack = {
       summary: buildSummary(text, courseName),
       keywords: localTopics.map((topic) => topic.title),
-      quiz: buildQuiz(text, courseName),
+      quiz: attachQuizToLesson(buildQuiz(text, courseName), localLesson),
       topics: localTopics,
       structuredSummary: localStructuredSummary,
       structuredQuiz: localStructuredQuiz,
+      lesson: localLesson,
     };
     const aiResult = await generateAiStudyPackWithDebug({
       courseName,
@@ -58,7 +62,9 @@ export async function POST(request: Request) {
       structuredQuiz: aiPack?.structuredQuiz?.length
         ? aiPack.structuredQuiz
         : localPack.structuredQuiz,
+      lesson: aiPack?.lesson?.modules.length ? aiPack.lesson : localPack.lesson,
     };
+    pack.quiz = attachQuizToLesson(pack.quiz, pack.lesson);
 
     if (pack.quiz.length === 0) {
       return NextResponse.json(
@@ -74,10 +80,25 @@ export async function POST(request: Request) {
       topics: pack.topics,
       summary: pack.structuredSummary,
       quiz: pack.quiz,
+      lesson: pack.lesson,
     });
     const missingTopicCount = pack.quiz.filter((question) => !question.topic).length;
     const missingSourcePageCount = pack.quiz.filter(
       (question) => typeof question.sourcePage !== "number",
+    ).length;
+    const missingQuizModuleLinkCount = pack.quiz.filter(
+      (question) => !question.moduleId,
+    ).length;
+    const lessonModuleCount = pack.lesson.modules.length;
+    const lessonBlockCount = pack.lesson.modules.reduce(
+      (total, module) => total + module.blocks.length,
+      0,
+    );
+    const missingCheckpointCount = pack.lesson.modules.filter(
+      (module) => !module.blocks.some((block) => block.type === "checkpoint"),
+    ).length;
+    const missingModuleSourcePageCount = pack.lesson.modules.filter(
+      (module) => module.sourcePages.length === 0,
     ).length;
     const debug = {
       topicCount: pack.topics.length,
@@ -92,6 +113,12 @@ export async function POST(request: Request) {
       quizQuestionCount: pack.quiz.length,
       missingTopicCount,
       missingSourcePageCount,
+      lessonModuleCount,
+      lessonBlockCount,
+      missingCheckpointCount,
+      missingModuleSourcePageCount,
+      missingQuizModuleLinkCount,
+      lessonQualityScore: quality.score,
       fallbackUsed: !aiPack,
       jsonParseError: aiResult.debug.jsonParseError,
       aiAttempted: aiResult.debug.attempted,
@@ -110,6 +137,7 @@ export async function POST(request: Request) {
       topics: pack.topics,
       structuredSummary: pack.structuredSummary,
       structuredQuiz: pack.structuredQuiz,
+      lesson: pack.lesson,
       engine: aiPack ? "ai" : "local",
       quality,
       debug,
